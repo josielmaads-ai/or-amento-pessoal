@@ -717,7 +717,7 @@ label{
   display:flex;align-items:center;gap:12px;
 }
 
-/* ===== DRIVE BANNER ===== */
+/* ===== SUPABASE SYNC BANNER ===== */
 .drive-banner{
   position:fixed;bottom:0;left:var(--sidebar-w);right:0;z-index:98;
   background:linear-gradient(135deg,rgba(7,8,9,.98),rgba(11,13,16,.98));
@@ -732,7 +732,7 @@ label{
 .drive-banner-text h4{font-size:13px;font-weight:700;margin-bottom:2px;}
 .drive-banner-text p{font-size:11px;color:var(--text2);}
 
-/* ===== GOOGLE DRIVE MODAL ===== */
+/* ===== SUPABASE MODAL ===== */
 .drive-modal-overlay{
   position:fixed;inset:0;
   background:rgba(0,0,0,.85);
@@ -1116,7 +1116,7 @@ tr:hover td { background: rgba(0,255,156,.025) !important; }
 /* ===== DASHBOARD EXTRAS ===== */
 .chart-card canvas { max-height: 200px; }
 
-/* === NOVO: Google Drive === */
+/* === Supabase Sync Indicator === */
 .drive-status-indicator {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 12px; border-radius: 20px; font-size: 10px;
@@ -3945,10 +3945,10 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
   <button class="hbtn" onclick="importBackup()">⬆ <span>Carregar</span></button>
   <button class="hbtn" onclick="exportCSV()">📊 <span>CSV</span></button>
   <button class="hbtn" onclick="window.print()">🖨</button>
-  <!-- === NOVO: Google Drive === -->
-  <div id="driveStatusIndicator" class="drive-status-indicator" onclick="driveStatusClick()" title="Google Drive">
+  <!-- === Supabase Sync Indicator === -->
+  <div id="driveStatusIndicator" class="drive-status-indicator" onclick="driveStatusClick()" title="Supabase Sync">
     <div class="drive-status-dot"></div>
-    <span id="driveStatusText">Drive</span>
+    <span id="driveStatusText">Sync</span>
   </div>
   <div class="bell-btn" id="bellBtn" onclick="toggleNotif()">
     🔔<span class="bell-badge" id="bellBadge" style="display:none">0</span>
@@ -4155,18 +4155,18 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
   </div>
 
 
-<!-- GOOGLE DRIVE SYNC POPUP -->
+<!-- SUPABASE SYNC SETUP POPUP -->
 <div class="drive-modal-overlay" id="driveModalOverlay" style="display:none;">
   <div class="drive-modal">
     <button class="drive-modal-close" onclick="closeDriveModal()">✕</button>
-    <div class="drive-modal-icon">☁️</div>
-    <div class="drive-modal-title">Sincronização com Google Drive</div>
+    <div class="drive-modal-icon">🔗</div>
+    <div class="drive-modal-title">Sincronização com Supabase</div>
     <div class="drive-modal-desc">
-      Conecte sua conta Google para salvar e restaurar seus dados automaticamente na nuvem.
+      Configure o Supabase para salvar e restaurar seus dados automaticamente na nuvem.
     </div>
     <div class="drive-modal-actions">
-      <button class="btn btn-primary" style="padding:11px 26px;font-size:13px;" onclick="connectGDriveModal()">
-        🔗 Conectar com Google Drive
+      <button class="btn btn-primary" style="padding:11px 26px;font-size:13px;" onclick="closeDriveModal();navigateTo('config')">
+        ⚙️ Configurar Supabase
       </button>
       <button class="btn" style="padding:11px 22px;font-size:13px;" onclick="closeDriveModal()">
         Agora não
@@ -4181,14 +4181,14 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
 
 </main>
 
-<!-- DRIVE BANNER (shown on first load) -->
+<!-- SUPABASE SYNC BANNER (shown on first load) -->
 <div class="drive-banner" id="driveBanner" style="display:none;">
-  <div class="drive-banner-icon">☁️</div>
+  <div class="drive-banner-icon">🔗</div>
   <div class="drive-banner-text">
-    <h4>Sincronizar com Google Drive</h4>
-    <p>Salve e carregue seus dados automaticamente na nuvem</p>
+    <h4>Sincronizar com Supabase</h4>
+    <p>Configure para salvar e carregar seus dados automaticamente na nuvem</p>
   </div>
-  <button class="btn btn-sm btn-sky" onclick="connectGDrive()">🔗 Conectar</button>
+  <button class="btn btn-sm btn-sky" onclick="dismissDriveBanner();navigateTo('config')">⚙️ Configurar</button>
   <button class="btn btn-sm" onclick="dismissDriveBanner()">Agora não</button>
 </div>
 
@@ -4197,34 +4197,49 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
 <script>
 
 // ================================================================
-// GOOGLE DRIVE MODAL
+// SUPABASE SYNC — Configuração
 // ================================================================
 
-/* === NOVO: Google Drive === */
-const GOOGLE_CLIENT_ID = '442080482391-bf416och40t7k40vskm59q746j1tnkdl.apps.googleusercontent.com';
-let _driveAccessToken = null; // token em memória apenas — não persiste
+/* Supabase — preencha após criar o projeto */
+let SUPABASE_URL = '';   // ex: https://xyzxyz.supabase.co
+let SUPABASE_ANON_KEY = ''; // chave anon/public do projeto
 
-// ================================================================
-// AUTO-SYNC CONFIG
-// ================================================================
-let _driveFileId = null;          // cache do ID do arquivo no Drive
-let _autoSyncTimer = null;        // timer de sincronização automática
-let _lastSyncHash = null;         // hash dos dados na última sync bem-sucedida
-let _syncInProgress = false;      // mutex para evitar sincronizações simultâneas
-let _autoSyncEnabled = false;     // ligado apenas quando conectado ao Drive
-const AUTO_SYNC_INTERVAL = 3000;  // 3 segundos
-const DRIVE_FILE_NAME = 'nexus-one-backup.json';
+// Estado interno de sincronização
+let _autoSyncTimer = null;
+let _lastSyncHash = null;
+let _syncInProgress = false;
+let _autoSyncEnabled = false;
+const AUTO_SYNC_INTERVAL = 5000; // 5 segundos
+
+// Variáveis de compatibilidade (mantidas para não quebrar referências legadas)
+let _driveAccessToken = null;
+let _driveFileId = null;
+
+/* Carrega credenciais Supabase do localStorage (configuradas pelo usuário) */
+function _loadSupabaseCreds(){
+  const url = localStorage.getItem('nexus_supabase_url') || '';
+  const key = localStorage.getItem('nexus_supabase_key') || '';
+  if(url) SUPABASE_URL = url;
+  if(key) SUPABASE_ANON_KEY = key;
+}
+_loadSupabaseCreds();
+
+/* Verifica se Supabase está configurado */
+function _supabaseConfigured(){
+  return !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
 
 function openDriveModal(){
-  // Respeita nexus_drive_skip no localStorage
   if(localStorage.getItem('nexus_drive_skip')==='1') return;
+  if(_supabaseConfigured()) return; // já configurado, não mostrar popup
+
   document.getElementById('driveModalOverlay').style.display='flex';
 }
 function closeDriveModal(){
   const skip = document.getElementById('driveSkipCheck');
   if(skip && skip.checked) localStorage.setItem('nexus_drive_skip','1');
   document.getElementById('driveModalOverlay').style.display='none';
-  DATA.config.driveDismissed=true;
+  DATA.config.supabaseDismissed=true;
   save(true);
 }
 function connectGDriveModal(){
@@ -4232,24 +4247,24 @@ function connectGDriveModal(){
   connectGDrive();
 }
 
-/* === NOVO: Google Drive — status indicator === */
+/* === Supabase — status indicator === */
 function updateDriveStatus(){
   const ind = document.getElementById('driveStatusIndicator');
   const txt = document.getElementById('driveStatusText');
   if(!ind||!txt) return;
-  if(_driveAccessToken){
+  if(_supabaseConfigured()){
     ind.classList.add('connected');
-    txt.textContent='Conectado';
+    txt.textContent='Sync';
   } else {
     ind.classList.remove('connected');
-    txt.textContent='Drive';
+    txt.textContent='Sync';
   }
 }
 
 function driveStatusClick(){
-  if(_driveAccessToken){
-    const syncStatus = _autoSyncEnabled ? 'Auto-sync ativo (a cada 3s)' : 'Auto-sync inativo';
-    showToast(`☁️ Drive conectado — ${syncStatus}. Use os botões em Configurações`,'var(--emerald)',4000);
+  if(_supabaseConfigured()){
+    const syncStatus = _autoSyncEnabled ? 'Auto-sync ativo' : 'Auto-sync inativo';
+    showToast(`🔗 Supabase configurado — ${syncStatus}. Use os botões em Configurações`,'var(--emerald)',4000);
   } else {
     openDriveModal();
   }
@@ -4264,7 +4279,7 @@ let DATA = {
   contas:[], movimentacoes:[], pagar:[], receber:[],
   gastosCartao:[], objetivos:[], tipos:[], subTipos:[],
   categoriasCartao:[], metasGasto:[],
-  config:{nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false},
+  config:{nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false},
   historicoFatura:[], auditoria:[],
   terceiros:[], movTerceiros:[],
   /* === NOVO: Previsões === */
@@ -4335,11 +4350,11 @@ function init(){
       sidebar.classList.remove('open');
     }
   });
-  if(localStorage.getItem('nexus_drive_skip')!=='1') setTimeout(()=>{ openDriveModal(); }, 1200);
-  /* === NOVO: Google Drive — check nexus_drive_skip === */
+  if(localStorage.getItem('nexus_drive_skip')!=='1' && !_supabaseConfigured()) setTimeout(()=>{ openDriveModal(); }, 1200);
+  /* === Supabase Sync — atualiza indicador === */
   updateDriveStatus();
-  /* === AUTO-SYNC: se token já estiver em memória (OAuth return já processado), inicia sync === */
-  if(_driveAccessToken) startAutoSync();
+  /* === AUTO-SYNC: inicia se Supabase estiver configurado === */
+  if(_supabaseConfigured()){ setTimeout(async()=>{ await _autoRestoreOnLogin(); startAutoSync(); }, 1000); }
 }
 
 function loadData(){
@@ -4350,7 +4365,7 @@ function loadData(){
   const d = {
     contas:[],movimentacoes:[],pagar:[],receber:[],gastosCartao:[],
     objetivos:[],tipos:[],subTipos:[],categoriasCartao:[],metasGasto:[],
-    config:{nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false},
+    config:{nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false},
     historicoFatura:[],auditoria:[],terceiros:[],movTerceiros:[],
     /* === NOVO: Previsões — migração === */
     previsoes:[],
@@ -4387,8 +4402,8 @@ function loadData(){
     if(!g.tipoNome) g.tipoNome = 'Outros';
   });
   if(!DATA.config) DATA.config=d.config;
-  ['nome','rendaMensal','diaFechamento','driveDismissed','googleClientId','driveConnected'].forEach(k=>{
-    if(DATA.config[k]===undefined) DATA.config[k]=d.config[k]!==undefined?d.config[k]:(k==='googleClientId'?'':k==='driveConnected'?false:d.config[k]);
+  ['nome','rendaMensal','diaFechamento','supabaseDismissed','supabaseUrl','supabaseConfigured'].forEach(k=>{
+    if(DATA.config[k]===undefined) DATA.config[k]=d.config[k]!==undefined?d.config[k]:(k==='supabaseUrl'?'':k==='supabaseConfigured'?false:d.config[k]);
   });
 }
 
@@ -4511,141 +4526,85 @@ function card(label, bgClass, badge, val, valClass, sub, extra=''){
 }
 
 // ================================================================
-// DRIVE INTEGRATION — Auto-Sync completo
+// SUPABASE SYNC — Implementação completa
 // ================================================================
 
 /**
- * Inicia fluxo OAuth 2.0 Implicit Grant para o Google Drive.
- * Redireciona para accounts.google.com; ao retornar, checkOAuthReturn() processa o token.
- */
-function connectGDrive(){
-  const scope = 'https://www.googleapis.com/auth/drive.file';
-  const redirectUri = window.location.origin + window.location.pathname;
-  const url = `https://accounts.google.com/o/oauth2/v2/auth`
-    +`?client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}`
-    +`&redirect_uri=${encodeURIComponent(redirectUri)}`
-    +`&response_type=token`
-    +`&scope=${encodeURIComponent(scope)}`
-    +`&prompt=consent`;
-  console.log('[NexusDrive] Iniciando autenticação OAuth 2.0...');
-  window.open(url,'_self');
-}
-
-function dismissDriveBanner(){
-  DATA.config.driveDismissed=true;
-  const b=document.getElementById('driveBanner');
-  if(b) b.style.display='none';
-  save(true);
-}
-
-/**
- * Gera um hash simples (checksum) dos dados atuais para detectar mudanças.
- * Evita uploads desnecessários ao Drive quando os dados não mudaram.
+ * Gera hash simples dos dados para detectar mudanças (evita uploads desnecessários).
  */
 function _dataHash(){
-  try{ return JSON.stringify(DATA).length + '_' + (DATA.movimentacoes||[]).length + '_' + (DATA.pagar||[]).length + '_' + (DATA.contas||[]).length + '_' + (DATA.gastosCartao||[]).length; }
+  try{ return JSON.stringify(DATA).length+'_'+(DATA.movimentacoes||[]).length+'_'+(DATA.pagar||[]).length+'_'+(DATA.contas||[]).length+'_'+(DATA.gastosCartao||[]).length; }
   catch(e){ return Date.now().toString(); }
 }
 
 /**
- * Busca (ou usa cache de) o ID do arquivo nexus-one-backup.json no Drive.
- * Retorna null se não encontrado.
+ * Faz requisição autenticada à API REST do Supabase.
  */
-async function _getDriveFileId(){
-  if(_driveFileId) return _driveFileId; // usa cache
+async function _supabaseFetch(path, options={}){
+  _loadSupabaseCreds();
+  const url = SUPABASE_URL.replace(/\/$/,'') + path;
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+    ...(options.headers||{})
+  };
+  return fetch(url, { ...options, headers });
+}
+
+/**
+ * Salva DATA no Supabase (upsert na tabela nexus_data, chave user_id='default').
+ * Retorna true em caso de sucesso.
+ */
+async function _uploadToSupabase(json, silent=false){
+  if(!_supabaseConfigured()) return false;
   try{
-    const r = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=name%3D'${DRIVE_FILE_NAME}'%20and%20trashed%3Dfalse&fields=files(id,name)`,
-      { headers:{ 'Authorization':'Bearer '+_driveAccessToken } }
-    );
-    if(r.status === 401){ _handleTokenExpired(); return null; }
-    const data = await r.json();
-    if(data.files && data.files.length > 0){
-      _driveFileId = data.files[0].id;
-      console.log('[NexusDrive] Arquivo encontrado no Drive, ID:', _driveFileId);
+    const r = await _supabaseFetch('/rest/v1/nexus_data', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ user_id:'default', data: json, updated_at: new Date().toISOString() })
+    });
+    if(r.ok || r.status===201||r.status===200||r.status===204){
+      if(!silent) console.log('[NexusSupabase] Upload concluído:', new Date().toLocaleTimeString('pt-BR'));
+      return true;
     }
-  } catch(e){ console.warn('[NexusDrive] Erro ao buscar arquivo no Drive:', e); }
-  return _driveFileId || null;
+    if(!silent) console.warn('[NexusSupabase] Upload falhou HTTP', r.status);
+    return false;
+  } catch(e){ console.error('[NexusSupabase] Erro no upload:', e); return false; }
 }
 
 /**
- * Trata token expirado: limpa estado de conexão e notifica o usuário.
+ * Baixa DATA do Supabase.
+ * Retorna o objeto parseado ou null se não encontrado.
  */
-function _handleTokenExpired(){
-  console.warn('[NexusDrive] Token expirado ou inválido. Desconectando...');
-  _driveAccessToken = null;
-  _driveFileId = null;
-  _autoSyncEnabled = false;
-  stopAutoSync();
-  updateDriveStatus();
-  showToast('⚠️ Sessão do Drive expirada. Reconecte para continuar sincronizando.','var(--amber)',6000);
-}
-
-/**
- * Faz upload do JSON para o Drive.
- * - Se o arquivo já existe (ID em cache ou encontrado): PATCH (atualiza).
- * - Se não existe: POST multipart (cria novo).
- * Nunca cria arquivos duplicados.
- */
-async function _uploadToDrive(json, silent=false){
-  if(!_driveAccessToken) return false;
+async function _downloadFromSupabase(){
+  if(!_supabaseConfigured()) return null;
   try{
-    const fileId = await _getDriveFileId();
-    let r;
-    if(fileId){
-      // Atualiza arquivo existente
-      r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,{
-        method:'PATCH',
-        headers:{ 'Authorization':'Bearer '+_driveAccessToken, 'Content-Type':'application/json' },
-        body: json
-      });
-      if(r.status === 401){ _handleTokenExpired(); return false; }
-      console.log('[NexusDrive] Arquivo atualizado no Drive (ID:', fileId, ')');
-    } else {
-      // Cria novo arquivo
-      const meta = JSON.stringify({ name: DRIVE_FILE_NAME, mimeType:'application/json' });
-      const fd = new FormData();
-      fd.append('metadata', new Blob([meta],{type:'application/json'}));
-      fd.append('file', new Blob([json],{type:'application/json'}));
-      r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{
-        method:'POST',
-        headers:{ 'Authorization':'Bearer '+_driveAccessToken },
-        body: fd
-      });
-      if(r.status === 401){ _handleTokenExpired(); return false; }
-      if(r.ok){
-        const created = await r.json();
-        _driveFileId = created.id; // armazena ID do arquivo recém-criado
-        console.log('[NexusDrive] Arquivo criado no Drive (ID:', _driveFileId, ')');
-      }
-    }
-    return r.ok;
-  } catch(e){ console.error('[NexusDrive] Erro no upload:', e); return false; }
+    const r = await _supabaseFetch('/rest/v1/nexus_data?user_id=eq.default&select=data,updated_at&limit=1');
+    if(!r.ok){ console.warn('[NexusSupabase] Download falhou HTTP', r.status); return null; }
+    const rows = await r.json();
+    if(!rows || !rows.length) return null;
+    const raw = rows[0].data;
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch(e){ console.error('[NexusSupabase] Erro no download:', e); return null; }
 }
 
 /**
- * Loop de sincronização automática.
- * Executa a cada AUTO_SYNC_INTERVAL ms.
- * Só faz upload se os dados mudaram desde a última sync (via hash).
- * Usa mutex _syncInProgress para evitar chamadas simultâneas.
+ * Loop de sincronização automática (a cada AUTO_SYNC_INTERVAL ms).
  */
 async function _autoSyncLoop(){
-  if(!_autoSyncEnabled || !_driveAccessToken || _syncInProgress) return;
+  if(!_autoSyncEnabled || !_supabaseConfigured() || _syncInProgress) return;
   const currentHash = _dataHash();
-  if(currentHash === _lastSyncHash) return; // sem mudanças, pula
+  if(currentHash === _lastSyncHash) return;
   _syncInProgress = true;
   try{
     const json = JSON.stringify(DATA, null, 2);
-    const ok = await _uploadToDrive(json, true);
+    const ok = await _uploadToSupabase(json, true);
     if(ok){
       _lastSyncHash = currentHash;
-      console.log('[NexusDrive] Auto-sync concluído:', new Date().toLocaleTimeString('pt-BR'));
-      // Atualiza indicador visual sutil no header
       _updateSyncIndicator(true);
-    } else if(_driveAccessToken){
-      console.warn('[NexusDrive] Falha no auto-sync. Tentará novamente no próximo ciclo.');
     }
-  } catch(e){ console.error('[NexusDrive] Erro no auto-sync:', e); }
+  } catch(e){ console.error('[NexusSupabase] Erro auto-sync:', e); }
   finally{ _syncInProgress = false; }
 }
 
@@ -4654,17 +4613,17 @@ function startAutoSync(){
   if(_autoSyncTimer) clearInterval(_autoSyncTimer);
   _autoSyncEnabled = true;
   _autoSyncTimer = setInterval(_autoSyncLoop, AUTO_SYNC_INTERVAL);
-  console.log('[NexusDrive] Auto-sync iniciado (intervalo:', AUTO_SYNC_INTERVAL, 'ms)');
+  console.log('[NexusSupabase] Auto-sync iniciado (intervalo:', AUTO_SYNC_INTERVAL, 'ms)');
 }
 
 /** Para o timer de sincronização automática. */
 function stopAutoSync(){
-  if(_autoSyncTimer){ clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+  if(_autoSyncTimer){ clearInterval(_autoSyncTimer); _autoSyncTimer=null; }
   _autoSyncEnabled = false;
-  console.log('[NexusDrive] Auto-sync parado.');
+  console.log('[NexusSupabase] Auto-sync parado.');
 }
 
-/** Atualiza o indicador visual de sincronização no header (piscada rápida). */
+/** Atualiza o indicador visual de sincronização no header. */
 function _updateSyncIndicator(ok){
   const dot = document.querySelector('.saved-dot');
   if(!dot) return;
@@ -4672,146 +4631,103 @@ function _updateSyncIndicator(ok){
 }
 
 /**
- * Verifica token OAuth no hash da URL após redirecionamento do Google.
- * Chamado automaticamente no carregamento da página.
+ * Salva manualmente no Supabase (chamado pelo botão em Configurações).
  */
-(function checkOAuthReturn(){
-  const hash = window.location.hash;
-  if(!hash.includes('access_token')) return;
-  const params = new URLSearchParams(hash.slice(1));
-  const token = params.get('access_token');
-  if(!token) return;
-  _driveAccessToken = token;
-  DATA.config.driveConnected = true;
-  save(true);
-  history.replaceState(null, null, ' ');
-  updateDriveStatus();
-  console.log('[NexusDrive] Token OAuth recebido com sucesso.');
-  showToast('✅ Google Drive conectado! Sincronizando dados...','var(--emerald)',4000);
-  // Após login, tenta restaurar dados do Drive automaticamente
-  setTimeout(async ()=>{
-    await _autoRestoreOnLogin();
-    startAutoSync();
-  }, 800);
-})();
-
-/**
- * Ao conectar pela primeira vez, verifica se há dados no Drive.
- * Se houver: oferece restauração. Em seguida inicia auto-sync.
- */
-async function _autoRestoreOnLogin(){
-  if(!_driveAccessToken) return;
-  console.log('[NexusDrive] Verificando dados existentes no Drive...');
-  try{
-    const fileId = await _getDriveFileId();
-    if(!fileId){ console.log('[NexusDrive] Nenhum arquivo encontrado no Drive. Será criado na próxima sync.'); return; }
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{
-      headers:{ 'Authorization':'Bearer '+_driveAccessToken }
-    });
-    if(!r.ok){ console.warn('[NexusDrive] Falha ao baixar arquivo do Drive.'); return; }
-    const text = await r.text();
-    let parsed;
-    try{ parsed = JSON.parse(text); } catch(e){ console.warn('[NexusDrive] Arquivo no Drive inválido.'); return; }
-    const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
-    if(validos.length < 2){ console.warn('[NexusDrive] Arquivo no Drive não parece ser um backup válido.'); return; }
-    // Compara datas: só pergunta se o backup do Drive for mais recente
-    const localMov = (DATA.movimentacoes||[]).length;
-    const driveMov = (parsed.movimentacoes||[]).length;
-    const localContas = (DATA.contas||[]).length;
-    const driveContas = (parsed.contas||[]).length;
-    const temDadosNoDrive = driveContas > 0 || driveMov > 0;
-    const dadosDiferentes = localMov !== driveMov || localContas !== driveContas;
-    if(temDadosNoDrive && dadosDiferentes){
-      const msg = `Encontramos um backup no Google Drive com:\n`
-        +`• ${driveContas} conta(s)  |  Local: ${localContas}\n`
-        +`• ${driveMov} movimentação(ões)  |  Local: ${localMov}\n\n`
-        +`Deseja restaurar os dados do Drive?\n(Os dados locais atuais serão substituídos)`;
-      if(confirm(msg)){
-        await _applyDriveData(parsed);
-        showToast('✅ Dados restaurados do Google Drive!','var(--emerald)',4000);
-      } else {
-        console.log('[NexusDrive] Usuário optou por manter dados locais.');
-        _lastSyncHash = null; // força sync dos dados locais para o Drive
-      }
-    } else if(temDadosNoDrive){
-      // Dados iguais ou Drive vazio — só sincroniza silenciosamente
-      console.log('[NexusDrive] Dados em sincronia com o Drive.');
-      _lastSyncHash = _dataHash();
-    }
-  } catch(e){ console.error('[NexusDrive] Erro ao verificar dados no Drive:', e); }
-}
-
-/**
- * Aplica dados vindos do Drive ao estado local (DATA).
- * Usa normalizarDados() se disponível, senão aplica guardas manuais.
- */
-async function _applyDriveData(parsed){
-  let norm;
-  if(typeof normalizarDados === 'function'){
-    norm = normalizarDados(JSON.parse(JSON.stringify(parsed)));
-  } else {
-    norm = parsed;
-    const arrays = ['contas','movimentacoes','pagar','receber','gastosCartao','objetivos',
-      'tipos','subTipos','categoriasCartao','metasGasto','historicoFatura','auditoria',
-      'terceiros','movTerceiros','previsoes','transferencias'];
-    arrays.forEach(k=>{ if(!Array.isArray(norm[k])) norm[k]=[]; });
-    if(!norm.config || typeof norm.config !== 'object') norm.config={};
-    ['nome','rendaMensal','diaFechamento','driveDismissed','googleClientId','driveConnected']
-      .forEach(k=>{ if(norm.config[k]===undefined) norm.config[k]=k==='rendaMensal'||k==='diaFechamento'?0:''; });
-  }
-  DATA = norm;
-  save(true);
-  navigateTo('dashboard');
-  _lastSyncHash = _dataHash(); // marca como sincronizado
-}
-
-/* === Salvar manualmente no Drive === */
 async function saveToGDrive(){
-  if(!_driveAccessToken) return showToast('⚠️ Drive não conectado. Conecte primeiro.','var(--amber)');
+  if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações > Supabase Sync.','var(--amber)',5000);
   if(typeof normalizarDados==='function') DATA = normalizarDados(DATA);
   save(true);
-  showToast('☁️ Salvando no Google Drive...','var(--orange)',2000);
+  showToast('🔗 Salvando no Supabase...','var(--orange)',2000);
   try{
     const json = JSON.stringify(DATA, null, 2);
-    const ok = await _uploadToDrive(json, false);
+    const ok = await _uploadToSupabase(json, false);
     if(ok){
       _lastSyncHash = _dataHash();
-      showToast('✅ Dados salvos no Google Drive!','var(--emerald)',3500);
+      showToast('✅ Dados salvos no Supabase!','var(--emerald)',3500);
     } else {
-      showToast('❌ Erro ao salvar no Drive. Tente novamente.','var(--coral)');
+      showToast('❌ Erro ao salvar no Supabase. Verifique URL e chave em Configurações.','var(--coral)');
     }
-  } catch(e){ console.error('[NexusDrive] saveToGDrive erro:', e); showToast('❌ Erro ao salvar no Drive.','var(--coral)'); }
+  } catch(e){ console.error('[NexusSupabase] saveToGDrive erro:', e); showToast('❌ Erro ao salvar no Supabase.','var(--coral)'); }
 }
 
-/* === Restaurar manualmente do Drive === */
+/**
+ * Restaura manualmente do Supabase (chamado pelo botão em Configurações).
+ */
 async function restoreFromGDrive(){
-  if(!_driveAccessToken) return showToast('⚠️ Drive não conectado. Conecte primeiro.','var(--amber)');
-  showToast('☁️ Buscando backup no Google Drive...','var(--orange)',2000);
+  if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações > Supabase Sync.','var(--amber)',5000);
+  showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
   try{
-    const fileId = await _getDriveFileId();
-    if(!fileId) return showToast('⚠️ Nenhum backup encontrado no Drive.','var(--amber)');
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{
-      headers:{ 'Authorization':'Bearer '+_driveAccessToken }
-    });
-    if(!r.ok) return showToast('❌ Erro ao baixar arquivo do Drive.','var(--coral)');
-    const text = await r.text();
-    let parsed;
-    try{ parsed = JSON.parse(text); } catch(e){ return showToast('❌ Arquivo de backup inválido.','var(--coral)'); }
+    const parsed = await _downloadFromSupabase();
+    if(!parsed) return showToast('⚠️ Nenhum dado encontrado no Supabase. Faça um backup primeiro.','var(--amber)',5000);
     const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
-    if(validos.length < 2) return showToast('❌ Arquivo de backup inválido ou corrompido.','var(--coral)');
+    if(validos.length < 2) return showToast('❌ Dados no Supabase estão corrompidos ou inválidos.','var(--coral)',5000);
     const norm = typeof normalizarDados==='function' ? normalizarDados(JSON.parse(JSON.stringify(parsed))) : parsed;
     const total = (norm.contas||[]).length+(norm.movimentacoes||[]).length+(norm.pagar||[]).length+(norm.receber||[]).length;
     if(!confirm(
-      `Restaurar backup do Drive? Os dados atuais serão substituídos.\n\n`
+      `Restaurar dados do Supabase? Os dados locais atuais serão substituídos.\n\n`
       +`Contas: ${(norm.contas||[]).length}\nMovimentações: ${(norm.movimentacoes||[]).length}\n`
       +`A Pagar: ${(norm.pagar||[]).length}\nA Receber: ${(norm.receber||[]).length}\n`
       +`Cartão: ${(norm.gastosCartao||[]).length} gastos\nPrevisões: ${(norm.previsoes||[]).length}\n`
       +`Transferências: ${(norm.transferencias||[]).length}\nObjetivos: ${(norm.objetivos||[]).length}\n`
       +`Terceiros: ${(norm.terceiros||[]).length}`
     )) return;
-    await _applyDriveData(parsed);
-    showToast(`✅ Dados restaurados do Google Drive! (${total} registros principais)`,'var(--emerald)',4000);
-  } catch(e){ console.error('[NexusDrive] restoreFromGDrive erro:', e); showToast('❌ Erro ao restaurar do Drive. Tente novamente.','var(--coral)'); }
+    DATA = norm;
+    save(true);
+    navigateTo('dashboard');
+    _lastSyncHash = _dataHash();
+    showToast(`✅ Dados restaurados do Supabase! (${total} registros principais)`,'var(--emerald)',4000);
+  } catch(e){ console.error('[NexusSupabase] restoreFromGDrive erro:', e); showToast('❌ Erro ao restaurar do Supabase. Tente novamente.','var(--coral)'); }
+}
+
+/**
+ * Ao iniciar, verifica se há dados no Supabase mais recentes e oferece restauração.
+ */
+async function _autoRestoreOnLogin(){
+  if(!_supabaseConfigured()) return;
+  console.log('[NexusSupabase] Verificando dados existentes no Supabase...');
+  try{
+    const parsed = await _downloadFromSupabase();
+    if(!parsed){ console.log('[NexusSupabase] Nenhum dado encontrado. Será criado na próxima sync.'); return; }
+    const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
+    if(validos.length < 2){ console.warn('[NexusSupabase] Dados no Supabase inválidos.'); return; }
+    const localMov = (DATA.movimentacoes||[]).length;
+    const remoteMov = (parsed.movimentacoes||[]).length;
+    const localContas = (DATA.contas||[]).length;
+    const remoteContas = (parsed.contas||[]).length;
+    const temDadosRemoto = remoteContas > 0 || remoteMov > 0;
+    const dadosDiferentes = localMov !== remoteMov || localContas !== remoteContas;
+    if(temDadosRemoto && dadosDiferentes){
+      const msg = `Encontramos dados no Supabase:\n`
+        +`• ${remoteContas} conta(s)  |  Local: ${localContas}\n`
+        +`• ${remoteMov} movimentação(ões)  |  Local: ${localMov}\n\n`
+        +`Deseja restaurar os dados do Supabase?\n(Os dados locais atuais serão substituídos)`;
+      if(confirm(msg)){
+        const norm = typeof normalizarDados==='function' ? normalizarDados(JSON.parse(JSON.stringify(parsed))) : parsed;
+        DATA = norm;
+        save(true);
+        navigateTo('dashboard');
+        _lastSyncHash = _dataHash();
+        showToast('✅ Dados restaurados do Supabase!','var(--emerald)',4000);
+      } else {
+        _lastSyncHash = null; // força upload dos dados locais
+      }
+    } else if(temDadosRemoto){
+      console.log('[NexusSupabase] Dados em sincronia.');
+      _lastSyncHash = _dataHash();
+    }
+  } catch(e){ console.error('[NexusSupabase] Erro ao verificar dados remotos:', e); }
+}
+
+/* Funções de compatibilidade para referências a Drive não substituídas */
+function connectGDrive(){
+  showToast('ℹ️ Configure Supabase URL e API Key em Configurações > Supabase Sync.','var(--sky)',5000);
+  navigateTo('config');
+}
+function dismissDriveBanner(){
+  DATA.config.supabaseDismissed=true;
+  const b=document.getElementById('driveBanner');
+  if(b) b.style.display='none';
+  save(true);
 }
 
 // ================================================================
@@ -6671,20 +6587,29 @@ function renderConfig(){
     </div>
 
     <div class="config-section">
-      <div class="config-section-title">☁️ Google Drive</div>
+      <div class="config-section-title">🔗 Supabase Sync</div>
       <div class="info-block" style="margin-bottom:12px;">
-        Status: <strong style="color:${_driveAccessToken?'var(--emerald)':'var(--text2)'}">${_driveAccessToken?'✅ Conectado':'❌ Não conectado'}</strong>
+        Status: <strong style="color:${_supabaseConfigured()?'var(--emerald)':'var(--text2)'}">${_supabaseConfigured()?'✅ Configurado':'❌ Não configurado'}</strong>
       </div>
-      <div class="config-row"><label>Google Client ID</label><input id="cfClientId" value="${esc(DATA.config.googleClientId||'')}" placeholder="Cole seu Google OAuth Client ID"></div>
+      <div class="config-row"><label>Supabase URL</label><input id="cfSupabaseUrl" value="${esc(localStorage.getItem('nexus_supabase_url')||'')}" placeholder="https://xyzxyz.supabase.co"></div>
+      <div class="config-row"><label>Supabase Anon Key</label><input id="cfSupabaseKey" value="${esc(localStorage.getItem('nexus_supabase_key')||'')}" placeholder="Cole sua chave anon/public"></div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
-        <button class="btn btn-sm btn-sky" onclick="salvarClientId()">💾 Salvar Client ID</button>
-        <button class="btn btn-sm btn-emerald" onclick="connectGDrive()">🔗 Conectar Drive</button>
-        <!-- === NOVO: Google Drive === -->
-        <button class="btn btn-sm btn-primary" onclick="saveToGDrive()">☁ Salvar no Drive</button>
-        <button class="btn btn-sm btn-amber" onclick="restoreFromGDrive()">⬇ Restaurar do Drive</button>
+        <button class="btn btn-sm btn-sky" onclick="salvarSupabaseCreds()">💾 Salvar Credenciais</button>
+        <button class="btn btn-sm btn-primary" onclick="saveToGDrive()">☁ Salvar no Supabase</button>
+        <button class="btn btn-sm btn-amber" onclick="restoreFromGDrive()">⬇ Restaurar do Supabase</button>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.6;">
-        Para configurar: (1) Crie um projeto em <strong>Google Cloud Console</strong>; (2) Ative a Drive API; (3) Crie credenciais OAuth 2.0; (4) Adicione seu domínio como origem autorizada.
+        Para configurar: (1) Crie um projeto em <strong>supabase.com</strong>; (2) Copie a URL e a chave <em>anon/public</em> de <strong>Settings → API</strong>; (3) Execute o SQL abaixo no <strong>SQL Editor</strong> do Supabase para criar a tabela necessária.
+      </div>
+      <div style="margin-top:10px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:12px;font-size:10px;font-family:'DM Mono',monospace;color:var(--text2);line-height:1.7;overflow-x:auto;">
+        -- Execute no SQL Editor do Supabase:<br>
+        CREATE TABLE IF NOT EXISTS nexus_data (<br>
+        &nbsp;&nbsp;user_id TEXT PRIMARY KEY DEFAULT 'default',<br>
+        &nbsp;&nbsp;data TEXT NOT NULL,<br>
+        &nbsp;&nbsp;updated_at TIMESTAMPTZ DEFAULT now()<br>
+        );<br>
+        ALTER TABLE nexus_data ENABLE ROW LEVEL SECURITY;<br>
+        CREATE POLICY "allow_all" ON nexus_data FOR ALL USING (true) WITH CHECK (true);
       </div>
     </div>
   </div>
@@ -6767,10 +6692,20 @@ function salvarConfigPessoal(){
   save(true); toast('✅ Configurações salvas');
 }
 
-function salvarClientId(){
-  DATA.config.googleClientId=document.getElementById('cfClientId').value.trim();
-  save(true); toast('✅ Client ID salvo');
+function salvarSupabaseCreds(){
+  const url = (document.getElementById('cfSupabaseUrl').value||'').trim();
+  const key = (document.getElementById('cfSupabaseKey').value||'').trim();
+  if(url) localStorage.setItem('nexus_supabase_url', url);
+  if(key) localStorage.setItem('nexus_supabase_key', key);
+  _loadSupabaseCreds();
+  updateDriveStatus();
+  save(true);
+  toast('✅ Credenciais Supabase salvas');
+  if(_supabaseConfigured()){ stopAutoSync(); startAutoSync(); }
 }
+
+// Mantém compatibilidade com referências legadas
+function salvarClientId(){ salvarSupabaseCreds(); }
 
 function excluirTipo(nome){
   if(!confirm('Excluir tipo "'+nome+'"?')) return;
@@ -6992,8 +6927,8 @@ function importBackup(){
         if(DATA.config.nome          === undefined) DATA.config.nome='';
         if(DATA.config.rendaMensal   === undefined) DATA.config.rendaMensal=0;
         if(DATA.config.diaFechamento === undefined) DATA.config.diaFechamento=15;
-        if(DATA.config.driveDismissed=== undefined) DATA.config.driveDismissed=false;
-        if(DATA.config.googleClientId=== undefined) DATA.config.googleClientId='';
+        if(DATA.config.supabaseDismissed=== undefined) DATA.config.supabaseDismissed=false;
+        if(DATA.config.supabaseUrl=== undefined) DATA.config.supabaseUrl='';
 
         // Migração legado: transferências internas antigas (movimentacoes com transferenciaId)
         loadData();
@@ -10480,7 +10415,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 <script>
 // ================================================================
 // Nexus One v9.1 - auditoria e correcao de backup/importacao.
-// Garante que JSON local e Google Drive preservem todos os modulos e campos v9.
+// Garante que JSON local e Supabase preservem todos os modulos e campos v9.
 // ================================================================
 (function nexusBackupV91(){
   var NEXUS_KEYS=[
@@ -10493,7 +10428,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     var d = raw && typeof raw==='object' ? raw : {};
     NEXUS_KEYS.forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
     if(!d.config || typeof d.config!=='object') d.config={};
-    var cfg={nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false,googleClientId:'',driveConnected:false};
+    var cfg={nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false,supabaseUrl:'',supabaseConfigured:false};
     Object.keys(cfg).forEach(function(k){ if(d.config[k]===undefined) d.config[k]=cfg[k]; });
     d.cartaoCicloAtual = d.cartaoCicloAtual && typeof d.cartaoCicloAtual==='object'
       ? {mes:parseInt(d.cartaoCicloAtual.mes,10)||mes(), ano:parseInt(d.cartaoCicloAtual.ano,10)||ano()}
@@ -10590,24 +10525,22 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   };
 
   window.restoreFromGDrive=async function(){
-    if(!_driveAccessToken) return showToast('Drive não conectado. Conecte primeiro.','var(--amber)');
-    showToast('Buscando backup no Google Drive...','var(--orange)',2000);
+    if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)');
+    showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
     try{
-      var fileId = await _getDriveFileId();
-      if(!fileId) return showToast('Nenhum backup encontrado no Drive.','var(--amber)');
-      var fileR=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',{headers:{'Authorization':'Bearer '+_driveAccessToken}});
-      var parsed=JSON.parse(await fileR.text());
-      if(!isValidBackup(parsed)) return showToast('Arquivo de backup invalido.','var(--coral)');
+      var parsed = await _downloadFromSupabase();
+      if(!parsed) return showToast('Nenhum dado encontrado no Supabase.','var(--amber)');
+      if(!isValidBackup(parsed)) return showToast('Dados do Supabase inválidos.','var(--coral)');
       var normalized=normalizeBackupData(parsed);
-      if(!confirm('Restaurar backup do Drive? Os dados atuais serão substituídos.\n\n'+backupSummary(normalized))) return;
+      if(!confirm('Restaurar dados do Supabase? Os dados atuais serão substituídos.\n\n'+backupSummary(normalized))) return;
       DATA=normalized;
       save(true);
       navigateTo('dashboard');
       _lastSyncHash = _dataHash();
-      showToast('Dados restaurados do Google Drive! ('+countBackupRecords(DATA)+' registros)','var(--emerald)',4000);
+      showToast('Dados restaurados do Supabase! ('+countBackupRecords(DATA)+' registros)','var(--emerald)',4000);
     }catch(e){
-      console.error('Erro ao restaurar do Drive:',e);
-      showToast('Erro ao restaurar do Drive. Tente novamente.','var(--coral)');
+      console.error('Erro ao restaurar do Supabase:',e);
+      showToast('Erro ao restaurar do Supabase. Tente novamente.','var(--coral)');
     }
   };
 
@@ -11042,7 +10975,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 
       // config — todos os campos obrigatórios
       if(!d.config || typeof d.config !== 'object') d.config = {};
-      var cfgDefaults = {nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false,googleClientId:'',driveConnected:false};
+      var cfgDefaults = {nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false,supabaseUrl:'',supabaseConfigured:false};
       Object.keys(cfgDefaults).forEach(function(k){ if(d.config[k]===undefined) d.config[k]=cfgDefaults[k]; });
 
       // Migração v10: gastosCartao sem tipoNome → mapear via categoriasCartao
@@ -11174,46 +11107,41 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       inp.click();
     };
 
-    // ── saveToGDrive FINAL — normaliza antes de enviar ao Drive ──
+    // ── saveToGDrive — Supabase edition (v11 override) ──
     window.saveToGDrive = async function(){
-      if(!_driveAccessToken) return showToast('⚠️ Drive não conectado. Conecte primeiro.','var(--amber)');
+      if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)');
       DATA = normalizarDados(DATA);
       save(true);
-      showToast('☁️ Salvando no Google Drive...','var(--orange)',2000);
+      showToast('🔗 Salvando no Supabase...','var(--orange)',2000);
       try{
         var json = JSON.stringify(DATA, null, 2);
-        var ok = await _uploadToDrive(json, false);
-        if(ok){ _lastSyncHash = _dataHash(); showToast('✅ Dados salvos no Google Drive!','var(--emerald)',3500); }
-        else showToast('❌ Erro ao salvar no Drive. Tente novamente.','var(--coral)');
-      }catch(e){ console.error('Nexus saveToGDrive erro:',e); showToast('❌ Erro ao salvar no Drive. Tente novamente.','var(--coral)'); }
+        var ok = await _uploadToSupabase(json, false);
+        if(ok){ _lastSyncHash = _dataHash(); showToast('✅ Dados salvos no Supabase!','var(--emerald)',3500); }
+        else showToast('❌ Erro ao salvar no Supabase. Tente novamente.','var(--coral)');
+      }catch(e){ console.error('Nexus saveToGDrive erro:',e); showToast('❌ Erro ao salvar no Supabase. Tente novamente.','var(--coral)'); }
     };
 
-    // ── restoreFromGDrive FINAL — usa normalizarDados(), sem chamar loadData() ──
+    // ── restoreFromGDrive — Supabase edition (v11 override) ──
     window.restoreFromGDrive = async function(){
-      if(!_driveAccessToken) return showToast('⚠️ Drive não conectado. Conecte primeiro.','var(--amber)');
-      showToast('☁️ Buscando backup no Google Drive...','var(--orange)',2000);
+      if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)');
+      showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
       try{
-        var fileId = await _getDriveFileId();
-        if(!fileId) return showToast('⚠️ Nenhum backup encontrado no Drive.','var(--amber)');
-        var fileR = await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
-          {headers:{'Authorization':'Bearer '+_driveAccessToken}});
-        var text = await fileR.text();
-        var parsed;
-        try{ parsed = JSON.parse(text); }catch(e){ return showToast('❌ Arquivo de backup inválido.','var(--coral)'); }
+        var parsed = await _downloadFromSupabase();
+        if(!parsed) return showToast('⚠️ Nenhum dado encontrado no Supabase.','var(--amber)');
         var validos = ['contas','movimentacoes','pagar','receber'].filter(function(k){return Array.isArray(parsed[k]);});
-        if(validos.length<2) return showToast('❌ Arquivo de backup inválido ou corrompido.','var(--coral)');
+        if(validos.length<2) return showToast('❌ Dados do Supabase inválidos ou corrompidos.','var(--coral)');
         var norm = normalizarDados(JSON.parse(JSON.stringify(parsed)));
         var total = norm.contas.length+norm.movimentacoes.length+norm.pagar.length+norm.receber.length;
-        if(!confirm('Restaurar backup do Drive? Os dados atuais serão substituídos.\n\n'+
+        if(!confirm('Restaurar dados do Supabase? Os dados atuais serão substituídos.\n\n'+
           'Contas: '+norm.contas.length+'\nMovimentações: '+norm.movimentacoes.length+'\nA Pagar: '+norm.pagar.length+'\nA Receber: '+norm.receber.length+'\nCartão: '+norm.gastosCartao.length+' gastos\nPrevisões: '+norm.previsoes.length+'\nTransferências: '+norm.transferencias.length+'\nObjetivos: '+norm.objetivos.length+'\nTerceiros: '+norm.terceiros.length)) return;
-        DATA = norm; // ← sem chamar loadData()
+        DATA = norm;
         save(true);
         navigateTo('dashboard');
         _lastSyncHash = _dataHash();
-        showToast('✅ Dados restaurados do Google Drive! ('+total+' registros principais)','var(--emerald)',4000);
+        showToast('✅ Dados restaurados do Supabase! ('+total+' registros principais)','var(--emerald)',4000);
       }catch(e){
         console.error('Nexus restoreFromGDrive erro:',e);
-        showToast('❌ Erro ao restaurar do Drive. Tente novamente.','var(--coral)');
+        showToast('❌ Erro ao restaurar do Supabase. Tente novamente.','var(--coral)');
       }
     };
 
@@ -11779,24 +11707,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 </script>
 <script>
 // ================================================================
-// Nexus One v12.1 — Correção Completa: Drive / Backup / Importação / Restauração
-//
-// Problemas identificados e corrigidos:
-//  [A] OAuth "O Google não verificou este app" — Client ID hardcoded de projeto não verificado.
-//      Solução: campo editável para o usuário informar o próprio Client ID + instrução clara.
-//  [B] Cadeia de sobrescritas de saveToGDrive/restoreFromGDrive em múltiplas versões
-//      gerava comportamento imprevisível. Solução: versão única definitiva no final.
-//  [C] restoreFromGDrive v9.1 sem verificação de fileR.ok antes de parsear JSON.
-//  [D] importBackup original chamava loadData() após setar DATA, perdendo a importação.
-//      (já corrigido no v10.1 — garantido que essa versão prevalece).
-//  [E] _autoRestoreOnLogin usava confirm() assíncrono podendo interferir com a inicialização.
-//      Solução: prompt não-bloqueante via openModal quando disponível.
-//  [F] checkOAuthReturn processa o token antes do DATA estar carregado.
-//      Solução: defer para após o DOMContentLoaded / init().
-//  [G] Validação e mensagens de erro/sucesso padronizadas e precisas.
-//  [H] exportBackup: validação pós-geração com contagem de todos os módulos.
-//  [I] Proteção contra token expirado em _getDriveFileId/_uploadToDrive já estava presente,
-//      mas a versão final unificada garante que todas as rotas usam a mesma lógica.
+// Nexus One v12.1 — Supabase edition: Backup / Importação / Sync
 // ================================================================
 (function nexusDriveFixV121(){
   'use strict';
@@ -11864,7 +11775,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     }
     _ALL_KEYS.forEach(function(k){ if(!Array.isArray(clone[k])) clone[k]=[]; });
     if(!clone.config || typeof clone.config !== 'object') clone.config={};
-    var cfgDef = {nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false,googleClientId:'',driveConnected:false};
+    var cfgDef = {nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false,supabaseUrl:'',supabaseConfigured:false};
     Object.keys(cfgDef).forEach(function(k){ if(clone.config[k]===undefined) clone.config[k]=cfgDef[k]; });
     if(!clone.cartaoCicloAtual || typeof clone.cartaoCicloAtual!=='object')
       clone.cartaoCicloAtual = {mes:new Date().getMonth()+1, ano:new Date().getFullYear()};
@@ -11891,158 +11802,73 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   }
 
   // ================================================================
-  // [A] OAUTH — Conexão com Drive usando Client ID do próprio usuário
-  // O Client ID hardcoded pertence ao desenvolvedor e não é verificado.
-  // O sistema agora usa o Client ID configurado pelo próprio usuário.
+  // [A] SUPABASE — Conexão usando credenciais do próprio usuário
   // ================================================================
-  function _getClientId(){
-    // Prioridade: configuração do usuário → fallback para o hardcoded (com aviso)
-    var userClientId = (DATA && DATA.config && DATA.config.googleClientId
-      ? DATA.config.googleClientId.trim() : '');
-    if(userClientId) return userClientId;
-    // Retorna o Client ID padrão, mas com aviso no console
-    console.warn(
-      '[NexusDrive] Usando Client ID padrão (não verificado pelo Google). ' +
-      'Para evitar o aviso "O Google não verificou este app", configure seu próprio ' +
-      'Client ID OAuth 2.0 em Configurações > Google Drive.'
-    );
-    return typeof GOOGLE_CLIENT_ID !== 'undefined' ? GOOGLE_CLIENT_ID : '';
-  }
+  function _getClientId(){ return ''; } // compatibilidade — não utilizado com Supabase
 
-  // Sobrescreve connectGDrive para usar o Client ID correto
+  // Sobrescreve connectGDrive para informar sobre Supabase
   window.connectGDrive = function(){
-    var clientId = _getClientId();
-    if(!clientId){
-      showToast('⚠️ Configure o Client ID do Google OAuth em Configurações antes de conectar.','var(--amber)',5000);
-      if(typeof navigateTo === 'function') navigateTo('config');
-      return;
-    }
-    var scope = 'https://www.googleapis.com/auth/drive.file';
-    var redirectUri = window.location.origin + window.location.pathname;
-    var url = 'https://accounts.google.com/o/oauth2/v2/auth'
-      + '?client_id=' + encodeURIComponent(clientId)
-      + '&redirect_uri=' + encodeURIComponent(redirectUri)
-      + '&response_type=token'
-      + '&scope=' + encodeURIComponent(scope)
-      + '&prompt=consent';
-    console.log('[NexusDrive] Iniciando autenticação OAuth com Client ID:', clientId.substring(0,20)+'...');
-    window.open(url, '_self');
+    showToast('ℹ️ Configure Supabase URL e API Key em Configurações > Supabase Sync.','var(--sky)',5000);
+    if(typeof navigateTo==='function') navigateTo('config');
   };
 
   // ================================================================
-  // [B/C/F] OAUTH RETURN — Processar token após redirecionamento do Google
-  // Corrigi: executa após DOM pronto para garantir que DATA e funções estejam disponíveis
+  // [B/C/F] OAUTH RETURN — Removido (não aplicável ao Supabase)
   // ================================================================
   _whenReady(function(){
-    // Pequeno delay para garantir que init() foi chamado e DATA está carregado
     setTimeout(function(){
-      var hash = window.location.hash;
-      if(!hash || !hash.includes('access_token')) return;
-      var params = new URLSearchParams(hash.slice(1));
-      var token = params.get('access_token');
-      if(!token) return;
-
-      // Limpar o hash da URL imediatamente para evitar re-processamento
-      history.replaceState(null, null, window.location.pathname + window.location.search);
-
-      // Verificar se o token já foi processado (evita dupla execução)
-      if(window._driveAccessToken === token) return;
-
-      window._driveAccessToken = token;
-      if(typeof DATA !== 'undefined' && DATA.config){
-        DATA.config.driveConnected = true;
+      // Nenhum token OAuth para processar com Supabase
+      // Inicia auto-sync se credenciais já estiverem configuradas
+      if(_supabaseConfigured() && typeof startAutoSync==='function'){
+        startAutoSync();
       }
-      if(typeof save === 'function') save(true);
-      if(typeof updateDriveStatus === 'function') updateDriveStatus();
-
-      console.log('[NexusDrive v12.1] Token OAuth recebido e processado após DOM pronto.');
-      showToast('✅ Google Drive conectado com sucesso!','var(--emerald)',4000);
-
-      // Verificar dados existentes no Drive de forma não-bloqueante
-      setTimeout(function(){
-        _verificarDadosDriveNaoBlockante();
-      }, 600);
-
-    }, 300); // aguarda init()
+    }, 400);
   });
 
   // ================================================================
-  // [E] AUTO-RESTORE NÃO BLOQUEANTE — usa openModal ao invés de confirm()
+  // [E] AUTO-RESTORE NÃO BLOQUEANTE — Supabase edition
   // ================================================================
   async function _verificarDadosDriveNaoBlockante(){
-    if(!window._driveAccessToken) return;
-    console.log('[NexusDrive v12.1] Verificando dados no Drive...');
+    if(!_supabaseConfigured()) return;
+    console.log('[NexusSupabase v12.1] Verificando dados no Supabase...');
     try{
-      var fileId = await _getDriveFileId();
-      if(!fileId){
-        console.log('[NexusDrive v12.1] Nenhum arquivo no Drive. Iniciando auto-sync.');
-        _iniciarAutoSync();
-        return;
-      }
-      var r = await fetch(
-        'https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
-        { headers:{ 'Authorization':'Bearer '+window._driveAccessToken } }
-      );
-      if(!r.ok){
-        console.warn('[NexusDrive v12.1] Não foi possível ler o arquivo do Drive (HTTP '+r.status+'). Iniciando auto-sync local.');
-        _iniciarAutoSync();
-        return;
-      }
-      var text = await r.text();
-      var parsed;
-      try{ parsed = JSON.parse(text); } catch(e){
-        console.warn('[NexusDrive v12.1] Arquivo do Drive inválido. Iniciando sync local.');
-        _iniciarAutoSync();
-        return;
-      }
-      if(!_isValidBackup(parsed)){
-        console.warn('[NexusDrive v12.1] Arquivo do Drive não é backup válido. Iniciando sync local.');
-        _iniciarAutoSync();
-        return;
-      }
-      // Comparar dados
+      var parsed = await _downloadFromSupabase();
+      if(!parsed){ console.log('[NexusSupabase v12.1] Nenhum dado no Supabase. Iniciando auto-sync.'); _iniciarAutoSync(); return; }
+      if(!_isValidBackup(parsed)){ console.warn('[NexusSupabase v12.1] Dados no Supabase inválidos. Iniciando sync local.'); _iniciarAutoSync(); return; }
       var localTotal = _totalRegistros(DATA);
-      var driveTotal = _totalRegistros(parsed);
-      var temDrive = driveTotal > 0;
-      var saoIguais = localTotal === driveTotal;
-
-      if(!temDrive || saoIguais){
-        console.log('[NexusDrive v12.1] Dados em sincronia. Iniciando auto-sync.');
+      var remoteTotal = _totalRegistros(parsed);
+      var temRemoto = remoteTotal > 0;
+      var saoIguais = localTotal === remoteTotal;
+      if(!temRemoto || saoIguais){
         if(typeof _lastSyncHash !== 'undefined') window._lastSyncHash = _dataHash();
         _iniciarAutoSync();
         return;
       }
-
-      // Dados diferentes — perguntar usando modal não-bloqueante
-      var msg = 'Encontramos dados no Google Drive:\n\n'+_resumoBackup(parsed)+
-        '\n\n─────────────────────────\nDados locais atuais: '+localTotal+' registros\nDados no Drive: '+driveTotal+' registros\n\nDeseja restaurar os dados do Drive?\n(Os dados locais atuais serão substituídos)';
-
+      var msg = 'Encontramos dados no Supabase:\n\n'+_resumoBackup(parsed)+
+        '\n\n─────────────────────────\nDados locais: '+localTotal+' registros\nDados no Supabase: '+remoteTotal+' registros\n\nDeseja restaurar os dados do Supabase?\n(Os dados locais atuais serão substituídos)';
       _confirmar(msg,
-        function(){ // SIM — restaurar do Drive
+        function(){
           var norm = _normalizar(parsed);
           DATA = norm;
           if(typeof save==='function') save(true);
           if(typeof navigateTo==='function') navigateTo('dashboard');
           if(typeof _dataHash==='function') window._lastSyncHash = _dataHash();
-          showToast('✅ Dados restaurados do Google Drive! ('+_totalRegistros(norm)+' registros)','var(--emerald)',5000);
+          showToast('✅ Dados restaurados do Supabase! ('+_totalRegistros(norm)+' registros)','var(--emerald)',5000);
           _iniciarAutoSync();
         },
-        function(){ // NÃO — manter local e forçar upload para o Drive
-          console.log('[NexusDrive v12.1] Usuário optou por manter dados locais. Sincronizando para o Drive...');
-          window._lastSyncHash = null; // força upload na próxima iteração
+        function(){
+          window._lastSyncHash = null;
           _iniciarAutoSync();
         }
       );
     } catch(e){
-      console.error('[NexusDrive v12.1] Erro ao verificar Drive:', e);
+      console.error('[NexusSupabase v12.1] Erro ao verificar Supabase:', e);
       _iniciarAutoSync();
     }
   }
 
   function _iniciarAutoSync(){
-    if(typeof startAutoSync === 'function'){
-      startAutoSync();
-    }
+    if(typeof startAutoSync === 'function'){ startAutoSync(); }
   }
 
   // ================================================================
@@ -12154,112 +11980,76 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   };
 
   // ================================================================
-  // SAVETOGDRIVE FINAL v12.1 — Normaliza, valida conexão, confirma sucesso real
+  // SAVETOGDRIVE FINAL v12.1 — Supabase edition
   // ================================================================
   window.saveToGDrive = async function(){
-    if(!window._driveAccessToken){
-      showToast('⚠️ Drive não conectado. Clique em "Conectar Drive" em Configurações.','var(--amber)',5000);
+    if(!_supabaseConfigured()){
+      showToast('⚠️ Supabase não configurado. Configure em Configurações > Supabase Sync.','var(--amber)',5000);
       return;
     }
-    showToast('☁️ Preparando dados para envio ao Google Drive...','var(--orange)',1500);
+    showToast('🔗 Preparando dados para envio ao Supabase...','var(--orange)',1500);
     try{
       DATA = _normalizar(DATA);
       if(typeof save==='function') save(true);
-
       var json = JSON.stringify(DATA, null, 2);
       var total = _totalRegistros(DATA);
-
-      var ok = await _uploadToDrive(json, false);
+      var ok = await _uploadToSupabase(json, false);
       if(ok){
         if(typeof _dataHash==='function') window._lastSyncHash = _dataHash();
-        showToast('✅ Backup realizado e sincronizado com o Google Drive! ('+total+' registros)','var(--emerald)',5000);
-        console.log('[v12.1 saveToGDrive] Upload concluído. Registros:', total);
+        showToast('✅ Backup realizado e sincronizado com o Supabase! ('+total+' registros)','var(--emerald)',5000);
       } else {
-        showToast('❌ Falha ao enviar para o Drive. Verifique sua conexão e tente novamente.','var(--coral)',5000);
-        console.error('[v12.1 saveToGDrive] _uploadToDrive retornou false.');
+        showToast('❌ Falha ao enviar para o Supabase. Verifique as credenciais em Configurações.','var(--coral)',5000);
       }
     } catch(e){
-      console.error('[v12.1 saveToGDrive] Erro:', e);
-      showToast('❌ Erro ao salvar no Drive: '+e.message,'var(--coral)',5000);
+      console.error('[v12.1-Supabase] saveToGDrive erro:', e);
+      showToast('❌ Erro ao salvar no Supabase: '+e.message,'var(--coral)',5000);
     }
   };
 
   // ================================================================
-  // RESTOREFROMDRIVE FINAL v12.1 — Verificação ok, modal, sem loadData()
+  // RESTOREFROMDRIVE FINAL v12.1 — Supabase edition
   // ================================================================
   window.restoreFromGDrive = async function(){
-    if(!window._driveAccessToken){
-      showToast('⚠️ Drive não conectado. Conecte primeiro em Configurações.','var(--amber)',5000);
+    if(!_supabaseConfigured()){
+      showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)',5000);
       return;
     }
-    showToast('☁️ Buscando backup no Google Drive...','var(--orange)',2000);
+    showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
     try{
-      var fileId = await _getDriveFileId();
-      if(!fileId){
-        showToast('⚠️ Nenhum backup encontrado no Google Drive. Faça um backup primeiro.','var(--amber)',5000);
+      var parsed = await _downloadFromSupabase();
+      if(!parsed){
+        showToast('⚠️ Nenhum dado encontrado no Supabase. Faça um backup primeiro.','var(--amber)',5000);
         return;
       }
-
-      var r = await fetch(
-        'https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
-        { headers:{ 'Authorization':'Bearer '+window._driveAccessToken } }
-      );
-
-      // Verificar HTTP antes de parsear
-      if(r.status === 401){
-        if(typeof _handleTokenExpired==='function') _handleTokenExpired();
-        showToast('⚠️ Sessão do Drive expirada. Reconecte e tente novamente.','var(--amber)',6000);
-        return;
-      }
-      if(!r.ok){
-        showToast('❌ Erro ao baixar o arquivo do Drive (HTTP '+r.status+'). Tente novamente.','var(--coral)',5000);
-        return;
-      }
-
-      var text = await r.text();
-      var parsed;
-      try{ parsed = JSON.parse(text); } catch(jsonErr){
-        showToast('❌ Arquivo de backup no Drive está corrompido ou inválido.','var(--coral)',5000);
-        console.error('[v12.1 restoreFromGDrive] JSON inválido:', jsonErr);
-        return;
-      }
-
       if(!_isValidBackup(parsed)){
-        showToast('❌ Arquivo no Drive não é um backup válido do sistema.','var(--coral)',5000);
+        showToast('❌ Dados no Supabase não são um backup válido do sistema.','var(--coral)',5000);
         return;
       }
-
       var norm = _normalizar(parsed);
       var total = _totalRegistros(norm);
       var resumo = _resumoBackup(norm);
-
       _confirmar(
-        'Restaurar backup do Google Drive?\nOs dados locais atuais serão substituídos.\n\n'+resumo+'\n\n─────────────────────────\nTotal: '+total+' registros',
+        'Restaurar dados do Supabase?\nOs dados locais atuais serão substituídos.\n\n'+resumo+'\n\n─────────────────────────\nTotal: '+total+' registros',
         function(){
-          // Aplicar dados normalizados — sem loadData()
           DATA = norm;
           if(typeof save==='function') save(true);
           if(typeof _dataHash==='function') window._lastSyncHash = _dataHash();
           if(typeof navigateTo==='function') navigateTo('dashboard');
-          setTimeout(function(){
-            if(typeof renderDashboard==='function') renderDashboard();
-          }, 100);
-          showToast('✅ Dados importados com sucesso! '+total+' registros restaurados do Google Drive.','var(--emerald)',6000);
-          console.log('[v12.1 restoreFromGDrive] Restauração concluída. Registros:', total);
+          setTimeout(function(){ if(typeof renderDashboard==='function') renderDashboard(); }, 100);
+          showToast('✅ Dados importados com sucesso! '+total+' registros restaurados do Supabase.','var(--emerald)',6000);
         }
       );
     } catch(e){
-      console.error('[v12.1 restoreFromGDrive] Erro:', e);
-      showToast('❌ Erro ao restaurar do Drive: '+e.message,'var(--coral)',5000);
+      console.error('[v12.1-Supabase] restoreFromGDrive erro:', e);
+      showToast('❌ Erro ao restaurar do Supabase: '+e.message,'var(--coral)',5000);
     }
   };
 
   // ================================================================
-  // AUTOSYNC v12.1 — Garante que o auto-sync usa normalizarDados antes de enviar
+  // AUTOSYNC v12.1 — Supabase edition
   // ================================================================
-  var _origAutoSyncLoop = window._autoSyncLoop;
   window._autoSyncLoop = async function(){
-    if(!window._autoSyncEnabled || !window._driveAccessToken || window._syncInProgress) return;
+    if(!window._autoSyncEnabled || !_supabaseConfigured() || window._syncInProgress) return;
     var currentHash = (typeof _dataHash==='function') ? _dataHash() : '';
     if(currentHash && currentHash === window._lastSyncHash) return;
     window._syncInProgress = true;
@@ -12267,62 +12057,31 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       var dadosSync = _normalizar(DATA);
       DATA = dadosSync;
       var json = JSON.stringify(DATA, null, 2);
-      var ok = await _uploadToDrive(json, true);
+      var ok = await _uploadToSupabase(json, true);
       if(ok){
         window._lastSyncHash = currentHash;
-        console.log('[NexusDrive v12.1] Auto-sync concluído:', new Date().toLocaleTimeString('pt-BR'));
         if(typeof _updateSyncIndicator==='function') _updateSyncIndicator(true);
-      } else if(window._driveAccessToken){
-        console.warn('[NexusDrive v12.1] Falha no auto-sync. Tentará novamente.');
       }
-    } catch(e){ console.error('[NexusDrive v12.1] Erro auto-sync:', e); }
+    } catch(e){ console.error('[NexusSupabase v12.1] Erro auto-sync:', e); }
     finally{ window._syncInProgress = false; }
   };
 
-  // Reiniciar o timer de auto-sync com a versão corrigida (se já estava rodando)
+  // Reiniciar auto-sync se Supabase configurado
   _whenReady(function(){
     setTimeout(function(){
-      if(window._autoSyncEnabled && window._driveAccessToken){
+      if(_supabaseConfigured()){
         if(typeof stopAutoSync==='function') stopAutoSync();
         if(typeof startAutoSync==='function') startAutoSync();
-        console.log('[NexusDrive v12.1] Timer de auto-sync reiniciado com versão corrigida.');
       }
     }, 500);
   });
 
-  // ================================================================
-  // ATUALIZAR PAINEL DE CONFIGURAÇÕES com instrução sobre Client ID
-  // ================================================================
-  _whenReady(function(){
-    setTimeout(function(){
-      // Adiciona nota informativa sobre o Client ID ao lado do campo de configuração
-      var cfClientId = document.getElementById('cfClientId');
-      if(cfClientId && !document.getElementById('driveClientIdNote')){
-        var nota = document.createElement('div');
-        nota.id = 'driveClientIdNote';
-        nota.style.cssText = 'margin-top:8px;padding:10px 14px;background:rgba(56,205,255,.05);border:1px solid rgba(56,205,255,.2);border-radius:8px;font-size:11px;color:var(--sky);line-height:1.5;';
-        nota.innerHTML =
-          '💡 <strong>Para eliminar o aviso "O Google não verificou este app":</strong><br>'+
-          '1. Acesse <a href="https://console.cloud.google.com" target="_blank" style="color:var(--sky);">Google Cloud Console</a><br>'+
-          '2. Crie um projeto → Ative a Drive API → Crie credenciais OAuth 2.0 (tipo: Aplicativo da Web)<br>'+
-          '3. Em "Origens JavaScript autorizadas", adicione a URL onde este sistema está hospedado<br>'+
-          '4. Cole o Client ID gerado no campo acima e clique em Salvar<br>'+
-          '5. Reconecte ao Drive — o aviso de verificação não aparecerá mais';
-        cfClientId.parentNode.parentNode.appendChild(nota);
-      }
-    }, 800);
-  });
-
-  console.log('⬡ Nexus One v12.1 — Correção Drive/Backup/Importação aplicada:');
-  console.log('  ✓ [A] OAuth: Client ID configurável pelo usuário (elimina aviso "não verificado")');
-  console.log('  ✓ [B] Cadeia de sobrescritas de saveToGDrive/restoreFromGDrive unificada');
-  console.log('  ✓ [C] restoreFromGDrive: verificação HTTP antes de parsear JSON');
-  console.log('  ✓ [D] importBackup: sem loadData() que anulava a importação');
-  console.log('  ✓ [E] Auto-restore: modal não-bloqueante ao invés de confirm()');
-  console.log('  ✓ [F] checkOAuthReturn: token processado após DOM/init() prontos');
-  console.log('  ✓ [G] Mensagens de sucesso/erro precisas e padronizadas');
-  console.log('  ✓ [H] exportBackup: validação pós-geração com todos os módulos');
-  console.log('  ✓ [I] Auto-sync: normalização antes de cada upload');
+  console.log('⬡ Nexus One v12.1-Supabase — Sync migrado para Supabase:');
+  console.log('  ✓ [A] Credenciais Supabase configuráveis pelo usuário (URL + Anon Key)');
+  console.log('  ✓ [B] saveToGDrive/restoreFromGDrive apontam para Supabase REST API');
+  console.log('  ✓ [C] Auto-sync: normalização + upload via Supabase upsert');
+  console.log('  ✓ [D] importBackup: sem loadData() — substituição direta de DATA');
+  console.log('  ✓ [E] exportBackup: backup JSON local preservado integralmente');
 
 })();
 </script>
