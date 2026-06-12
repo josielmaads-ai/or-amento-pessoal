@@ -4347,10 +4347,16 @@ function init(){
     }
   });
   if(localStorage.getItem('nexus_supabase_skip')!=='1') setTimeout(()=>{ openDriveModal(); }, 1200);
-  /* === SUPABASE — restaurar sessão salva === */
+  /* === SUPABASE — restaurar sessão salva e iniciar sync === */
   updateDriveStatus();
-  /* === AUTO-SYNC: se sessão Supabase já existir, inicia sync === */
-  _sbRestoreSession().then(()=>{ if(_sbSession) startAutoSync(); });
+  _sbRestoreSession().then(()=>{
+    if(_sbSession){
+      startAutoSync();          // inicia timer + ciclo imediato
+      updateDriveStatus();      // atualiza indicador visual após restauração
+    }
+  }).catch(function(e){
+    console.warn('[NexusSupabase] Erro na restauração de sessão no init:', e);
+  });
 }
 
 function loadData(){
@@ -4406,6 +4412,10 @@ function loadData(){
 function save(silent=false){
   localStorage.setItem(SK,JSON.stringify(DATA));
   updateSaved();
+  // Sinaliza ao auto-sync que houve mudança (hash invalidado)
+  _lastSyncHash = null;
+  // Dispara sync imediato no Supabase de forma não-bloqueante
+  if(_sbSession) _sbUpsertSnapshot(JSON.stringify(DATA), true).catch(function(){});
   if(!silent) showToast('💾 Salvo automaticamente','var(--orange)');
 }
 function forceSave(){ save(false); showToast('✅ Dados salvos com sucesso','var(--emerald)'); }
@@ -4554,15 +4564,21 @@ async function _sbRestoreSession(){
     const saved = localStorage.getItem('nexus_sb_session');
     if(!saved) return;
     const session = JSON.parse(saved);
-    // Verifica se o token ainda é válido (exp em segundos)
-    if(session && session.access_token && session.expires_at){
-      if(Date.now()/1000 < session.expires_at - 60){
+    if(session && session.access_token){
+      const expiresAt = session.expires_at || 0;
+      const nowSec = Date.now()/1000;
+      if(nowSec < expiresAt - 600){
+        // Token válido por mais de 10 minutos
         _sbSession = session;
         updateDriveStatus();
-        console.log('[NexusSupabase] Sessão restaurada do localStorage.');
-      } else {
-        // Token expirado — tenta refresh
+        console.log('[NexusSupabase] Sessão restaurada. Expira em', Math.round((expiresAt-nowSec)/60), 'min.');
+      } else if(session.refresh_token){
+        // Token expirado ou expira em < 10 min — renova
+        console.log('[NexusSupabase] Token próximo do vencimento. Renovando...');
         await _sbRefreshSession(session.refresh_token);
+      } else {
+        console.warn('[NexusSupabase] Token expirado sem refresh_token. Login necessário.');
+        localStorage.removeItem('nexus_sb_session');
       }
     }
   } catch(e){ console.warn('[NexusSupabase] Erro ao restaurar sessão:', e); }
@@ -4582,12 +4598,21 @@ async function _sbRefreshSession(refreshToken){
     if(r.ok){
       const data = await r.json();
       if(data.access_token){
+        // Garantir expires_at se não vier na resposta
+        if(!data.expires_at && data.expires_in){
+          data.expires_at = Math.floor(Date.now()/1000) + data.expires_in;
+        }
         _sbSession = data;
         localStorage.setItem('nexus_sb_session', JSON.stringify(data));
         updateDriveStatus();
-        console.log('[NexusSupabase] Token renovado com sucesso.');
+        console.log('[NexusSupabase] Token renovado. Novo vencimento:', new Date((data.expires_at||0)*1000).toLocaleTimeString('pt-BR'));
+      } else {
+        console.warn('[NexusSupabase] Refresh retornou sem access_token:', data);
+        localStorage.removeItem('nexus_sb_session');
       }
     } else {
+      const errText = await r.text().catch(()=>'');
+      console.warn('[NexusSupabase] Falha no refresh:', r.status, errText);
       localStorage.removeItem('nexus_sb_session');
     }
   }catch(e){ console.warn('[NexusSupabase] Erro ao renovar token:', e); }
@@ -4611,15 +4636,19 @@ function _openSupabaseLoginModal(){
       <p style="font-size:12px;color:var(--text2);margin:0;">Entre com sua conta para sincronizar seus dados em qualquer dispositivo.</p>
       <div>
         <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px;">E-mail</label>
-        <input id="sbLoginEmail" type="email" placeholder="seu@email.com" style="width:100%;box-sizing:border-box;">
+        <input id="sbLoginEmail" type="email" placeholder="seu@email.com"
+          style="width:100%;box-sizing:border-box;"
+          onkeydown="if(event.key==='Enter') _sbDoLogin()">
       </div>
       <div>
         <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px;">Senha</label>
-        <input id="sbLoginPass" type="password" placeholder="Mínimo 6 caracteres" style="width:100%;box-sizing:border-box;">
+        <input id="sbLoginPass" type="password" placeholder="Mínimo 6 caracteres"
+          style="width:100%;box-sizing:border-box;"
+          onkeydown="if(event.key==='Enter') _sbDoLogin()">
       </div>
       <div style="display:flex;gap:8px;justify-content:center;margin-top:4px;">
-        <button class="btn btn-sm btn-emerald" onclick="_sbDoLogin()">🔐 Entrar</button>
-        <button class="btn btn-sm btn-sky" onclick="_sbDoSignup()">📝 Criar conta</button>
+        <button id="sbBtnLogin" class="btn btn-sm btn-emerald" onclick="_sbDoLogin()">🔐 Entrar</button>
+        <button id="sbBtnSignup" class="btn btn-sm btn-sky" onclick="_sbDoSignup()">📝 Criar conta</button>
       </div>
       <div id="sbLoginMsg" style="font-size:11px;color:var(--coral);text-align:center;min-height:16px;"></div>
     </div>`;
@@ -4628,7 +4657,9 @@ function _openSupabaseLoginModal(){
   setTimeout(()=>{
     const footer = document.querySelector('.modal-footer');
     if(footer) footer.style.display='none';
-  },50);
+    const emailInput = document.getElementById('sbLoginEmail');
+    if(emailInput) emailInput.focus();
+  },80);
 }
 
 async function _sbDoLogin(){
@@ -4636,7 +4667,11 @@ async function _sbDoLogin(){
   const pass  = (document.getElementById('sbLoginPass')||{}).value;
   const msg   = document.getElementById('sbLoginMsg');
   if(!email||!pass){ if(msg) msg.textContent='Preencha e-mail e senha.'; return; }
-  if(msg) msg.textContent='Entrando...';
+  if(msg){ msg.textContent='Entrando...'; msg.style.color='var(--text2)'; }
+  const btnL = document.getElementById('sbBtnLogin');
+  const btnS = document.getElementById('sbBtnSignup');
+  if(btnL) btnL.disabled = true;
+  if(btnS) btnS.disabled = true;
   try{
     const r = await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{
       method:'POST',
@@ -4645,6 +4680,10 @@ async function _sbDoLogin(){
     });
     const data = await r.json();
     if(r.ok && data.access_token){
+      // Garantir expires_at se não vier na resposta
+      if(!data.expires_at && data.expires_in){
+        data.expires_at = Math.floor(Date.now()/1000) + data.expires_in;
+      }
       _sbSession = data;
       localStorage.setItem('nexus_sb_session', JSON.stringify(data));
       closeAllModals();
@@ -4654,10 +4693,14 @@ async function _sbDoLogin(){
       await _sbAutoRestoreOnLogin();
       startAutoSync();
     } else {
-      if(msg) msg.textContent = data.error_description || data.msg || 'Erro ao entrar. Verifique suas credenciais.';
+      if(msg){ msg.textContent = data.error_description || data.msg || 'Erro ao entrar. Verifique suas credenciais.'; msg.style.color='var(--coral)'; }
+      if(btnL) btnL.disabled = false;
+      if(btnS) btnS.disabled = false;
     }
   }catch(e){
-    if(msg) msg.textContent='Erro de conexão. Verifique sua internet.';
+    if(msg){ msg.textContent='Erro de conexão. Verifique sua internet.'; msg.style.color='var(--coral)'; }
+    if(btnL) btnL.disabled = false;
+    if(btnS) btnS.disabled = false;
     console.error('[NexusSupabase] Login erro:', e);
   }
 }
@@ -4666,9 +4709,13 @@ async function _sbDoSignup(){
   const email = (document.getElementById('sbLoginEmail')||{}).value?.trim();
   const pass  = (document.getElementById('sbLoginPass')||{}).value;
   const msg   = document.getElementById('sbLoginMsg');
-  if(!email||!pass){ if(msg) msg.textContent='Preencha e-mail e senha.'; return; }
-  if(pass.length < 6){ if(msg) msg.textContent='Senha deve ter pelo menos 6 caracteres.'; return; }
-  if(msg) msg.textContent='Criando conta...';
+  if(!email||!pass){ if(msg){ msg.textContent='Preencha e-mail e senha.'; msg.style.color='var(--coral)'; } return; }
+  if(pass.length < 6){ if(msg){ msg.textContent='Senha deve ter pelo menos 6 caracteres.'; msg.style.color='var(--coral)'; } return; }
+  if(msg){ msg.textContent='Criando conta...'; msg.style.color='var(--text2)'; }
+  const btnL = document.getElementById('sbBtnLogin');
+  const btnS = document.getElementById('sbBtnSignup');
+  if(btnL) btnL.disabled = true;
+  if(btnS) btnS.disabled = true;
   try{
     const r = await fetch(SUPABASE_URL+'/auth/v1/signup',{
       method:'POST',
@@ -4677,6 +4724,10 @@ async function _sbDoSignup(){
     });
     const data = await r.json();
     if(r.ok && data.access_token){
+      // Garantir expires_at se não vier na resposta
+      if(!data.expires_at && data.expires_in){
+        data.expires_at = Math.floor(Date.now()/1000) + data.expires_in;
+      }
       _sbSession = data;
       localStorage.setItem('nexus_sb_session', JSON.stringify(data));
       closeAllModals();
@@ -4687,10 +4738,14 @@ async function _sbDoSignup(){
       // Conta criada mas requer confirmação de e-mail
       if(msg) msg.textContent='Conta criada! Verifique seu e-mail para confirmar e então faça login.';
     } else {
-      if(msg) msg.textContent = data.msg || data.error_description || 'Erro ao criar conta.';
+      if(msg){ msg.textContent = data.msg || data.error_description || 'Erro ao criar conta.'; msg.style.color='var(--coral)'; }
+      if(btnL) btnL.disabled = false;
+      if(btnS) btnS.disabled = false;
     }
   }catch(e){
-    if(msg) msg.textContent='Erro de conexão.';
+    if(msg){ msg.textContent='Erro de conexão. Verifique sua internet.'; msg.style.color='var(--coral)'; }
+    if(btnL) btnL.disabled = false;
+    if(btnS) btnS.disabled = false;
     console.error('[NexusSupabase] Signup erro:', e);
   }
 }
@@ -4699,18 +4754,19 @@ async function _sbDoSignup(){
  * Desconecta do Supabase (logout).
  */
 async function disconnectSupabase(){
-  if(!_sbSession) return;
+  if(!_sbSession){ showToast('ℹ️ Você não está conectado.','var(--text2)',2500); return; }
   try{
     await fetch(SUPABASE_URL+'/auth/v1/logout',{
       method:'POST',
       headers:_sbHeaders()
     });
-  }catch(e){}
+  }catch(e){ console.warn('[NexusSupabase] Erro no logout remoto (ignorado):', e); }
   _sbSession = null;
+  _lastSyncHash = null;
   localStorage.removeItem('nexus_sb_session');
   stopAutoSync();
   updateDriveStatus();
-  showToast('✅ Desconectado do Supabase.','var(--orange)',3000);
+  showToast('✅ Desconectado da nuvem. Seus dados locais foram preservados.','var(--orange)',4000);
 }
 
 function dismissDriveBanner(){
@@ -4726,16 +4782,45 @@ function dismissDriveBanner(){
 async function _sbUpsertSnapshot(json, silent=false){
   if(!_sbSession) return false;
   try{
-    const r = await fetch(SUPABASE_URL+'/rest/v1/nexus_snapshots', {
-      method:'POST',
-      headers:{
-        ..._sbHeaders(),
-        'Prefer':'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({ user_id: _sbSession.user.id, data: JSON.parse(json) })
-    });
-    if(r.status === 401){ _handleTokenExpired(); return false; }
-    return r.ok || r.status === 201 || r.status === 200;
+    // Tenta update primeiro (mais eficiente e seguro com RLS)
+    const rPatch = await fetch(
+      SUPABASE_URL+'/rest/v1/nexus_snapshots?user_id=eq.'+encodeURIComponent(_sbSession.user.id),
+      {
+        method:'PATCH',
+        headers:{ ..._sbHeaders(), 'Prefer':'return=minimal' },
+        body: JSON.stringify({ data: JSON.parse(json) })
+      }
+    );
+    if(rPatch.status === 401){ _handleTokenExpired(); return false; }
+    // Se PATCH atualizou 0 linhas (usuário sem snapshot), faz INSERT
+    const contentRange = rPatch.headers.get('Content-Range') || '';
+    const updated = rPatch.ok && contentRange !== '*/0' && contentRange !== '';
+    if(rPatch.ok && !updated){
+      // Linha não existe ainda — faz INSERT
+      const rPost = await fetch(
+        SUPABASE_URL+'/rest/v1/nexus_snapshots',
+        {
+          method:'POST',
+          headers:{ ..._sbHeaders(), 'Prefer':'return=minimal' },
+          body: JSON.stringify({ data: JSON.parse(json) })
+        }
+      );
+      if(rPost.status === 401){ _handleTokenExpired(); return false; }
+      if(!rPost.ok){
+        const errText = await rPost.text().catch(()=>'');
+        console.error('[NexusSupabase] Erro INSERT:', rPost.status, errText);
+        return false;
+      }
+      console.log('[NexusSupabase] Snapshot criado (INSERT).');
+      return true;
+    }
+    if(!rPatch.ok){
+      const errText = await rPatch.text().catch(()=>'');
+      console.error('[NexusSupabase] Erro PATCH:', rPatch.status, errText);
+      return false;
+    }
+    if(!silent) console.log('[NexusSupabase] Snapshot atualizado (PATCH).');
+    return true;
   }catch(e){ console.error('[NexusSupabase] Erro upsert:', e); return false; }
 }
 
@@ -4745,12 +4830,17 @@ async function _sbUpsertSnapshot(json, silent=false){
 async function _sbFetchSnapshot(){
   if(!_sbSession) return null;
   try{
+    // RLS garante que retorna apenas o registro do usuário autenticado
     const r = await fetch(
-      SUPABASE_URL+'/rest/v1/nexus_snapshots?user_id=eq.'+_sbSession.user.id+'&select=data,updated_at&limit=1',
+      SUPABASE_URL+'/rest/v1/nexus_snapshots?select=data,updated_at&limit=1',
       { headers: _sbHeaders() }
     );
     if(r.status === 401){ _handleTokenExpired(); return null; }
-    if(!r.ok) return null;
+    if(!r.ok){
+      const errText = await r.text().catch(()=>'');
+      console.error('[NexusSupabase] Erro fetch snapshot:', r.status, errText);
+      return null;
+    }
     const rows = await r.json();
     return (rows && rows.length > 0) ? rows[0] : null;
   }catch(e){ console.error('[NexusSupabase] Erro fetch:', e); return null; }
@@ -4761,6 +4851,11 @@ async function _sbFetchSnapshot(){
  */
 async function _autoSyncLoop(){
   if(!_autoSyncEnabled || !_sbSession || _syncInProgress) return;
+  // Renovar token proativamente se necessário
+  const expiresAt = (_sbSession.expires_at||0);
+  if(Date.now()/1000 > expiresAt - 300 && _sbSession.refresh_token){
+    await _sbRefreshSession(_sbSession.refresh_token);
+  }
   const currentHash = _dataHash();
   if(currentHash === _lastSyncHash) return;
   _syncInProgress = true;
@@ -4769,24 +4864,45 @@ async function _autoSyncLoop(){
     const ok = await _sbUpsertSnapshot(json, true);
     if(ok){
       _lastSyncHash = currentHash;
-      console.log('[NexusSupabase] Auto-sync concluído:', new Date().toLocaleTimeString('pt-BR'));
+      console.log('[NexusSupabase] Auto-sync OK:', new Date().toLocaleTimeString('pt-BR'));
       _updateSyncIndicator(true);
+    } else {
+      console.warn('[NexusSupabase] Auto-sync falhou — será retentado no próximo ciclo.');
     }
-  }catch(e){ console.error('[NexusSupabase] Erro auto-sync:', e); }
-  finally{ _syncInProgress = false; }
+  }catch(e){
+    console.error('[NexusSupabase] Erro auto-sync:', e);
+  }finally{
+    _syncInProgress = false;
+  }
 }
 
 /** Inicia o timer de sincronização automática. */
+let _tokenRefreshTimer = null;
+
 function startAutoSync(){
   if(_autoSyncTimer) clearInterval(_autoSyncTimer);
   _autoSyncEnabled = true;
   _autoSyncTimer = setInterval(_autoSyncLoop, AUTO_SYNC_INTERVAL);
+  // Renovação proativa do token a cada 50 minutos (tokens Supabase duram ~1h)
+  if(_tokenRefreshTimer) clearInterval(_tokenRefreshTimer);
+  _tokenRefreshTimer = setInterval(function(){
+    if(_sbSession && _sbSession.refresh_token){
+      console.log('[NexusSupabase] Renovação proativa do token...');
+      _sbRefreshSession(_sbSession.refresh_token);
+    }
+  }, 50 * 60 * 1000);
+  // Ciclo imediato: garante que dados locais não sincronizados sejam enviados
+  _lastSyncHash = null;
+  setTimeout(_autoSyncLoop, 800);
   console.log('[NexusSupabase] Auto-sync iniciado (intervalo:', AUTO_SYNC_INTERVAL, 'ms)');
 }
 
 /** Para o timer de sincronização automática. */
 function stopAutoSync(){
   if(_autoSyncTimer){ clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+  if(typeof _tokenRefreshTimer !== 'undefined' && _tokenRefreshTimer){
+    clearInterval(_tokenRefreshTimer); _tokenRefreshTimer = null;
+  }
   _autoSyncEnabled = false;
   console.log('[NexusSupabase] Auto-sync parado.');
 }
@@ -4805,38 +4921,52 @@ async function _sbAutoRestoreOnLogin(){
   if(!_sbSession) return;
   try{
     const row = await _sbFetchSnapshot();
-    if(!row || !row.data){ console.log('[NexusSupabase] Nenhum snapshot no servidor.'); return; }
+    if(!row || !row.data){
+      console.log('[NexusSupabase] Servidor sem snapshot — enviando dados locais.');
+      _lastSyncHash = null; return;
+    }
     const parsed = row.data;
     const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
-    if(validos.length < 2){ console.warn('[NexusSupabase] Snapshot inválido.'); return; }
-    const localMov   = (DATA.movimentacoes||[]).length;
-    const serverMov  = (parsed.movimentacoes||[]).length;
-    const localContas= (DATA.contas||[]).length;
-    const serverContas=(parsed.contas||[]).length;
-    const temDados   = serverContas > 0 || serverMov > 0;
-    const diferentes = localMov !== serverMov || localContas !== serverContas;
-    if(temDados && diferentes){
-      const msg = `Encontramos dados na nuvem (Supabase):
-`
-        +`• ${serverContas} conta(s)  |  Local: ${localContas}
-`
-        +`• ${serverMov} movimentação(ões)  |  Local: ${localMov}
+    if(validos.length < 2){ console.warn('[NexusSupabase] Snapshot inválido. Ignorado.'); return; }
 
-`
-        +`Deseja restaurar os dados da nuvem?
-(Os dados locais serão substituídos)`;
+    const localMov    = (DATA.movimentacoes||[]).length;
+    const serverMov   = (parsed.movimentacoes||[]).length;
+    const localContas = (DATA.contas||[]).length;
+    const serverContas= (parsed.contas||[]).length;
+    const localPagar  = (DATA.pagar||[]).length;
+    const serverPagar = (parsed.pagar||[]).length;
+    const temDadosServidor = serverContas > 0 || serverMov > 0;
+    const temDadosLocal    = localContas > 0 || localMov > 0;
+
+    if(!temDadosServidor && temDadosLocal){
+      console.log('[NexusSupabase] Servidor vazio. Enviando dados locais...');
+      _lastSyncHash = null; return;
+    }
+
+    const serverTotal = serverContas + serverMov + serverPagar;
+    const localTotal  = localContas  + localMov  + localPagar;
+
+    if(temDadosServidor && serverTotal !== localTotal){
+      const updAt = row.updated_at ? new Date(row.updated_at).toLocaleString('pt-BR') : '?';
+      const msg = 'Dados encontrados na nuvem (sync: ' + updAt + '):\n\n'
+        + '             Nuvem  |  Local\n'
+        + 'Contas:       ' + serverContas + '  |  ' + localContas + '\n'
+        + 'Moviment.:    ' + serverMov    + '  |  ' + localMov    + '\n'
+        + 'A Pagar:      ' + serverPagar  + '  |  ' + localPagar  + '\n\n'
+        + 'Carregar dados da nuvem?\n(Cancelar = manter local e enviar para nuvem)';
       if(confirm(msg)){
         await _applySupabaseData(parsed);
-        showToast('✅ Dados restaurados da nuvem!','var(--emerald)',4000);
+        showToast('\u2705 Dados carregados da nuvem!','var(--emerald)',4000);
       } else {
-        _lastSyncHash = null; // força upload dos dados locais
+        _lastSyncHash = null;
+        showToast('\u2139\ufe0f Dados locais ser\u00e3o enviados para a nuvem.','var(--orange)',3000);
       }
     } else {
       _lastSyncHash = _dataHash();
+      console.log('[NexusSupabase] Dados em sincronia.');
     }
   }catch(e){ console.error('[NexusSupabase] Erro ao verificar dados na nuvem:', e); }
 }
-
 /**
  * Aplica dados vindos do Supabase ao estado local.
  */
@@ -4855,27 +4985,32 @@ async function _applySupabaseData(parsed){
       .forEach(k=>{ if(norm.config[k]===undefined) norm.config[k]=k==='rendaMensal'||k==='diaFechamento'?0:''; });
   }
   DATA = norm;
-  save(true);
+  localStorage.setItem(SK, JSON.stringify(DATA)); // evita loop: não dispara sync via save()
+  updateSaved();
   navigateTo('dashboard');
-  _lastSyncHash = _dataHash();
+  _lastSyncHash = _dataHash(); // marca como sincronizado — evita re-upload desnecessário
 }
 
 /** Salvar manualmente no Supabase (substitui saveToGDrive). */
 async function saveToGDrive(){
   if(!_sbSession) return showToast('⚠️ Não conectado. Faça login em Configurações.','var(--amber)');
   if(typeof normalizarDados==='function') DATA = normalizarDados(DATA);
-  save(true);
+  localStorage.setItem(SK, JSON.stringify(DATA)); // salva local sem disparar outro sync
+  updateSaved();
   showToast('☁️ Salvando na nuvem (Supabase)...','var(--orange)',2000);
   try{
     const json = JSON.stringify(DATA);
     const ok = await _sbUpsertSnapshot(json, false);
     if(ok){
       _lastSyncHash = _dataHash();
-      showToast('✅ Dados salvos na nuvem (Supabase)!','var(--emerald)',3500);
+      showToast('✅ Dados salvos na nuvem!','var(--emerald)',3500);
     } else {
-      showToast('❌ Erro ao salvar na nuvem. Tente novamente.','var(--coral)');
+      showToast('❌ Erro ao salvar na nuvem. Verifique sua conexão e tente novamente.','var(--coral)',5000);
     }
-  }catch(e){ console.error('[NexusSupabase] saveToGDrive erro:', e); showToast('❌ Erro ao salvar.','var(--coral)'); }
+  }catch(e){
+    console.error('[NexusSupabase] saveToGDrive erro:', e);
+    showToast('❌ Erro ao salvar. Verifique sua conexão.','var(--coral)',5000);
+  }
 }
 
 /** Restaurar manualmente do Supabase (substitui restoreFromGDrive). */
@@ -4910,7 +5045,7 @@ Objetivos: ${(norm.objetivos||[]).length}
     )) return;
     await _applySupabaseData(parsed);
     showToast(`✅ Dados restaurados da nuvem! (${total} registros principais)`,'var(--emerald)',4000);
-  }catch(e){ console.error('[NexusSupabase] restoreFromGDrive erro:', e); showToast('❌ Erro ao restaurar. Tente novamente.','var(--coral)'); }
+  }catch(e){ console.error('[NexusSupabase] restoreFromGDrive erro:', e); showToast('❌ Erro ao restaurar. Verifique sua conexão e tente novamente.','var(--coral)',5000); }
 }
 
 // ================================================================
@@ -7097,7 +7232,7 @@ function importBackup(){
         // Migração legado: transferências internas antigas (movimentacoes com transferenciaId)
         loadData();
 
-        save(true);
+        save(true); // ← salva no localStorage E dispara sync Supabase via save()
         navigateTo('dashboard');
         const total=(DATA.contas.length+DATA.movimentacoes.length+DATA.pagar.length+DATA.receber.length);
         toast('✅ Backup importado com sucesso! ('+total+' registros carregados)');
@@ -10668,7 +10803,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
           if(!confirm('Substituir todos os dados pelo arquivo importado?\n\n'+backupSummary(normalized))) return;
           DATA=normalized;
           // Nao chamar loadData aqui: ele recarrega o localStorage antigo e anula a importacao.
-          save(true);
+          save(true); // salva no localStorage E dispara sync Supabase via save()
           navigateTo('dashboard');
           toast('Backup importado com sucesso! ('+countBackupRecords(DATA)+' registros carregados)');
         }catch(err){
@@ -11242,10 +11377,27 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
               'Configurações e ciclo do cartão: incluídos';
             if(!confirm('Substituir TODOS os dados pelo arquivo importado?\n\n'+resumo)) return;
             DATA = norm; // ← sem chamar loadData() que sobrescreveria com localStorage
-            save(true);
+            save(true);   // ← salva no localStorage E dispara sync Supabase via save()
             navigateTo('dashboard');
             var total = norm.contas.length+norm.movimentacoes.length+norm.pagar.length+norm.receber.length;
             showToast('✅ Backup importado! ('+total+' registros principais carregados)','var(--emerald)',4000);
+            // Sync imediato e explícito com Supabase após importação
+            if(typeof _sbSession !== 'undefined' && _sbSession){
+              showToast('☁️ Sincronizando dados importados com a nuvem...','var(--orange)',2500);
+              _sbUpsertSnapshot(JSON.stringify(DATA), true).then(function(ok){
+                if(ok){
+                  _lastSyncHash = _dataHash();
+                  showToast('✅ Dados importados sincronizados com a nuvem!','var(--emerald)',4000);
+                } else {
+                  showToast('⚠️ Importação salva localmente. Clique em "Salvar na Nuvem" para sincronizar.','var(--amber)',6000);
+                }
+              }).catch(function(e){
+                console.error('[NexusSupabase] Erro sync pós-importação:', e);
+                showToast('⚠️ Importação salva localmente. Clique em "Salvar na Nuvem" para sincronizar.','var(--amber)',6000);
+              });
+            } else {
+              showToast('ℹ️ Dados salvos localmente. Faça login para sincronizar com a nuvem.','var(--orange)',5000);
+            }
           }catch(err){
             console.error('Nexus importBackup erro:',err);
             showToast('❌ Arquivo inválido ou corrompido','var(--coral)');
@@ -12047,5 +12199,57 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 
 })();
 </script>
+
+<!-- ============================================================
+  NEXUS ONE — SQL DE SEGURANÇA ATUALIZADO
+  Execute no SQL Editor do Supabase caso precise recriar as tabelas.
+  
+  ALTERAÇÕES EM RELAÇÃO AO SQL ORIGINAL:
+  - Removidas as funções RPC (upsert_nexus_snapshot, insert_nexus_backup)
+    pois a integração agora usa REST direto (PATCH + POST)
+  - Policy INSERT usa auth.uid() como DEFAULT para user_id no body
+  - Policy UPDATE filtra por user_id implicitamente via RLS
+  - Policy PATCH adicionada explicitamente
+
+  SQL CORRETO:
+
+  CREATE TABLE IF NOT EXISTS public.nexus_snapshots (
+    id         uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    data       jsonb NOT NULL DEFAULT '{}',
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS nexus_snapshots_user_id_unique ON public.nexus_snapshots (user_id);
+
+  ALTER TABLE public.nexus_snapshots ENABLE ROW LEVEL SECURITY;
+
+  -- SELECT: usuário vê apenas seus dados
+  CREATE POLICY "nexus_snapshots_select_own" ON public.nexus_snapshots
+    FOR SELECT USING (auth.uid() = user_id);
+
+  -- INSERT: user_id preenchido automaticamente via DEFAULT auth.uid()
+  CREATE POLICY "nexus_snapshots_insert_own" ON public.nexus_snapshots
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+  -- UPDATE/PATCH: usuário atualiza apenas seus próprios dados
+  CREATE POLICY "nexus_snapshots_update_own" ON public.nexus_snapshots
+    FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+  -- DELETE: usuário deleta apenas seus próprios dados
+  CREATE POLICY "nexus_snapshots_delete_own" ON public.nexus_snapshots
+    FOR DELETE USING (auth.uid() = user_id);
+
+  -- Trigger para updated_at automático
+  CREATE OR REPLACE FUNCTION public.set_updated_at()
+  RETURNS TRIGGER LANGUAGE plpgsql AS $$
+  BEGIN NEW.updated_at = now(); RETURN NEW; END; $$;
+
+  DROP TRIGGER IF EXISTS nexus_snapshots_updated_at ON public.nexus_snapshots;
+  CREATE TRIGGER nexus_snapshots_updated_at
+    BEFORE UPDATE ON public.nexus_snapshots
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+============================================================ -->
 </body>
 </html>
