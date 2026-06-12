@@ -717,7 +717,7 @@ label{
   display:flex;align-items:center;gap:12px;
 }
 
-/* ===== SUPABASE SYNC BANNER ===== */
+/* ===== DRIVE BANNER ===== */
 .drive-banner{
   position:fixed;bottom:0;left:var(--sidebar-w);right:0;z-index:98;
   background:linear-gradient(135deg,rgba(7,8,9,.98),rgba(11,13,16,.98));
@@ -732,7 +732,7 @@ label{
 .drive-banner-text h4{font-size:13px;font-weight:700;margin-bottom:2px;}
 .drive-banner-text p{font-size:11px;color:var(--text2);}
 
-/* ===== SUPABASE MODAL ===== */
+/* ===== GOOGLE DRIVE MODAL ===== */
 .drive-modal-overlay{
   position:fixed;inset:0;
   background:rgba(0,0,0,.85);
@@ -1116,7 +1116,7 @@ tr:hover td { background: rgba(0,255,156,.025) !important; }
 /* ===== DASHBOARD EXTRAS ===== */
 .chart-card canvas { max-height: 200px; }
 
-/* === Supabase Sync Indicator === */
+/* === NOVO: Google Drive === */
 .drive-status-indicator {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 12px; border-radius: 20px; font-size: 10px;
@@ -3945,10 +3945,10 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
   <button class="hbtn" onclick="importBackup()">⬆ <span>Carregar</span></button>
   <button class="hbtn" onclick="exportCSV()">📊 <span>CSV</span></button>
   <button class="hbtn" onclick="window.print()">🖨</button>
-  <!-- === Supabase Sync Indicator === -->
-  <div id="driveStatusIndicator" class="drive-status-indicator" onclick="driveStatusClick()" title="Supabase Sync">
+  <!-- === SUPABASE — status indicator === -->
+  <div id="driveStatusIndicator" class="drive-status-indicator" onclick="driveStatusClick()" title="Sincronização Supabase">
     <div class="drive-status-dot"></div>
-    <span id="driveStatusText">Sync</span>
+    <span id="driveStatusText">Nuvem</span>
   </div>
   <div class="bell-btn" id="bellBtn" onclick="toggleNotif()">
     🔔<span class="bell-badge" id="bellBadge" style="display:none">0</span>
@@ -4155,18 +4155,18 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
   </div>
 
 
-<!-- SUPABASE SYNC SETUP POPUP -->
+<!-- GOOGLE DRIVE SYNC POPUP -->
 <div class="drive-modal-overlay" id="driveModalOverlay" style="display:none;">
   <div class="drive-modal">
     <button class="drive-modal-close" onclick="closeDriveModal()">✕</button>
-    <div class="drive-modal-icon">🔗</div>
-    <div class="drive-modal-title">Sincronização com Supabase</div>
+    <div class="drive-modal-icon">☁️</div>
+    <div class="drive-modal-title">Sincronização em Nuvem</div>
     <div class="drive-modal-desc">
-      Configure o Supabase para salvar e restaurar seus dados automaticamente na nuvem.
+      Crie uma conta ou faça login para salvar e restaurar seus dados automaticamente na nuvem.
     </div>
     <div class="drive-modal-actions">
-      <button class="btn btn-primary" style="padding:11px 26px;font-size:13px;" onclick="closeDriveModal();navigateTo('config')">
-        ⚙️ Configurar Supabase
+      <button class="btn btn-primary" style="padding:11px 26px;font-size:13px;" onclick="connectGDriveModal()">
+        🔗 Conectar à Nuvem
       </button>
       <button class="btn" style="padding:11px 22px;font-size:13px;" onclick="closeDriveModal()">
         Agora não
@@ -4181,14 +4181,14 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
 
 </main>
 
-<!-- SUPABASE SYNC BANNER (shown on first load) -->
+<!-- DRIVE BANNER (shown on first load) -->
 <div class="drive-banner" id="driveBanner" style="display:none;">
-  <div class="drive-banner-icon">🔗</div>
+  <div class="drive-banner-icon">☁️</div>
   <div class="drive-banner-text">
-    <h4>Sincronizar com Supabase</h4>
-    <p>Configure para salvar e carregar seus dados automaticamente na nuvem</p>
+    <h4>Sincronizar com a Nuvem</h4>
+    <p>Salve e carregue seus dados automaticamente via Supabase</p>
   </div>
-  <button class="btn btn-sm btn-sky" onclick="dismissDriveBanner();navigateTo('config')">⚙️ Configurar</button>
+  <button class="btn btn-sm btn-sky" onclick="connectGDrive()">🔗 Conectar</button>
   <button class="btn btn-sm" onclick="dismissDriveBanner()">Agora não</button>
 </div>
 
@@ -4197,49 +4197,45 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
 <script>
 
 // ================================================================
-// SUPABASE SYNC — Configuração
+// SUPABASE — Configuração e Integração
 // ================================================================
 
-/* Supabase — preencha após criar o projeto */
-let SUPABASE_URL = '';   // ex: https://xyzxyz.supabase.co
-let SUPABASE_ANON_KEY = ''; // chave anon/public do projeto
+const SUPABASE_URL  = 'https://zixipmjuxdyazhykccqt.supabase.co';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppeGlwbWp1eGR5YXpoeWtjY3F0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMTE3NjIsImV4cCI6MjA5Njc4Nzc2Mn0.zpflvmDF1znehiAt-egrKA02Lh-Xg92Q0bh_dFgVmN8';
 
-// Estado interno de sincronização
-let _autoSyncTimer = null;
-let _lastSyncHash = null;
-let _syncInProgress = false;
-let _autoSyncEnabled = false;
+// ── Estado de sessão Supabase ──
+let _sbSession      = null;   // sessão autenticada (token JWT + user)
+let _autoSyncTimer  = null;   // timer de sincronização automática
+let _lastSyncHash   = null;   // hash dos dados na última sync bem-sucedida
+let _syncInProgress = false;  // mutex para evitar sincronizações simultâneas
+let _autoSyncEnabled= false;  // ligado apenas quando autenticado
 const AUTO_SYNC_INTERVAL = 5000; // 5 segundos
 
-// Variáveis de compatibilidade (mantidas para não quebrar referências legadas)
-let _driveAccessToken = null;
-let _driveFileId = null;
-
-/* Carrega credenciais Supabase do localStorage (configuradas pelo usuário) */
-function _loadSupabaseCreds(){
-  const url = localStorage.getItem('nexus_supabase_url') || '';
-  const key = localStorage.getItem('nexus_supabase_key') || '';
-  if(url) SUPABASE_URL = url;
-  if(key) SUPABASE_ANON_KEY = key;
+// ── Helpers HTTP Supabase ──
+function _sbHeaders(withAuth=true){
+  const h = { 'Content-Type':'application/json', 'apikey': SUPABASE_KEY };
+  if(withAuth && _sbSession) h['Authorization'] = 'Bearer ' + _sbSession.access_token;
+  return h;
 }
-_loadSupabaseCreds();
-
-/* Verifica se Supabase está configurado */
-function _supabaseConfigured(){
-  return !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+async function _sbPost(path, body){
+  const r = await fetch(SUPABASE_URL + path, { method:'POST', headers:_sbHeaders(), body:JSON.stringify(body) });
+  return r;
+}
+async function _sbGet(path){
+  const r = await fetch(SUPABASE_URL + path, { method:'GET', headers:_sbHeaders() });
+  return r;
 }
 
 function openDriveModal(){
-  if(localStorage.getItem('nexus_drive_skip')==='1') return;
-  if(_supabaseConfigured()) return; // já configurado, não mostrar popup
-
+  // Respeita nexus_supabase_skip no localStorage
+  if(localStorage.getItem('nexus_supabase_skip')==='1') return;
   document.getElementById('driveModalOverlay').style.display='flex';
 }
 function closeDriveModal(){
   const skip = document.getElementById('driveSkipCheck');
-  if(skip && skip.checked) localStorage.setItem('nexus_drive_skip','1');
+  if(skip && skip.checked) localStorage.setItem('nexus_supabase_skip','1');
   document.getElementById('driveModalOverlay').style.display='none';
-  DATA.config.supabaseDismissed=true;
+  DATA.config.driveDismissed=true;
   save(true);
 }
 function connectGDriveModal(){
@@ -4247,24 +4243,24 @@ function connectGDriveModal(){
   connectGDrive();
 }
 
-/* === Supabase — status indicator === */
+/* === SUPABASE — status indicator === */
 function updateDriveStatus(){
   const ind = document.getElementById('driveStatusIndicator');
   const txt = document.getElementById('driveStatusText');
   if(!ind||!txt) return;
-  if(_supabaseConfigured()){
+  if(_sbSession){
     ind.classList.add('connected');
-    txt.textContent='Sync';
+    txt.textContent='Conectado';
   } else {
     ind.classList.remove('connected');
-    txt.textContent='Sync';
+    txt.textContent='Nuvem';
   }
 }
 
 function driveStatusClick(){
-  if(_supabaseConfigured()){
+  if(_sbSession){
     const syncStatus = _autoSyncEnabled ? 'Auto-sync ativo' : 'Auto-sync inativo';
-    showToast(`🔗 Supabase configurado — ${syncStatus}. Use os botões em Configurações`,'var(--emerald)',4000);
+    showToast(`☁️ Supabase conectado — ${syncStatus}. Use os botões em Configurações`,'var(--emerald)',4000);
   } else {
     openDriveModal();
   }
@@ -4279,7 +4275,7 @@ let DATA = {
   contas:[], movimentacoes:[], pagar:[], receber:[],
   gastosCartao:[], objetivos:[], tipos:[], subTipos:[],
   categoriasCartao:[], metasGasto:[],
-  config:{nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false},
+  config:{nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false},
   historicoFatura:[], auditoria:[],
   terceiros:[], movTerceiros:[],
   /* === NOVO: Previsões === */
@@ -4350,11 +4346,11 @@ function init(){
       sidebar.classList.remove('open');
     }
   });
-  if(localStorage.getItem('nexus_drive_skip')!=='1' && !_supabaseConfigured()) setTimeout(()=>{ openDriveModal(); }, 1200);
-  /* === Supabase Sync — atualiza indicador === */
+  if(localStorage.getItem('nexus_supabase_skip')!=='1') setTimeout(()=>{ openDriveModal(); }, 1200);
+  /* === SUPABASE — restaurar sessão salva === */
   updateDriveStatus();
-  /* === AUTO-SYNC: inicia se Supabase estiver configurado === */
-  if(_supabaseConfigured()){ setTimeout(async()=>{ await _autoRestoreOnLogin(); startAutoSync(); }, 1000); }
+  /* === AUTO-SYNC: se sessão Supabase já existir, inicia sync === */
+  _sbRestoreSession().then(()=>{ if(_sbSession) startAutoSync(); });
 }
 
 function loadData(){
@@ -4365,7 +4361,7 @@ function loadData(){
   const d = {
     contas:[],movimentacoes:[],pagar:[],receber:[],gastosCartao:[],
     objetivos:[],tipos:[],subTipos:[],categoriasCartao:[],metasGasto:[],
-    config:{nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false},
+    config:{nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false},
     historicoFatura:[],auditoria:[],terceiros:[],movTerceiros:[],
     /* === NOVO: Previsões — migração === */
     previsoes:[],
@@ -4402,8 +4398,8 @@ function loadData(){
     if(!g.tipoNome) g.tipoNome = 'Outros';
   });
   if(!DATA.config) DATA.config=d.config;
-  ['nome','rendaMensal','diaFechamento','supabaseDismissed','supabaseUrl','supabaseConfigured'].forEach(k=>{
-    if(DATA.config[k]===undefined) DATA.config[k]=d.config[k]!==undefined?d.config[k]:(k==='supabaseUrl'?'':k==='supabaseConfigured'?false:d.config[k]);
+  ['nome','rendaMensal','diaFechamento','driveDismissed'].forEach(k=>{
+    if(DATA.config[k]===undefined) DATA.config[k]=d.config[k]!==undefined?d.config[k]:(typeof d.config[k]==='boolean'?false:'');
   });
 }
 
@@ -4526,85 +4522,257 @@ function card(label, bgClass, badge, val, valClass, sub, extra=''){
 }
 
 // ================================================================
-// SUPABASE SYNC — Implementação completa
+// SUPABASE INTEGRATION — Autenticação, Sync e Restore
 // ================================================================
 
 /**
- * Gera hash simples dos dados para detectar mudanças (evita uploads desnecessários).
+ * Retorna hash simples dos dados para detectar mudanças.
  */
 function _dataHash(){
-  try{ return JSON.stringify(DATA).length+'_'+(DATA.movimentacoes||[]).length+'_'+(DATA.pagar||[]).length+'_'+(DATA.contas||[]).length+'_'+(DATA.gastosCartao||[]).length; }
-  catch(e){ return Date.now().toString(); }
-}
-
-/**
- * Faz requisição autenticada à API REST do Supabase.
- */
-async function _supabaseFetch(path, options={}){
-  _loadSupabaseCreds();
-  const url = SUPABASE_URL.replace(/\/$/,'') + path;
-  const headers = {
-    'Content-Type': 'application/json',
-    'apikey': SUPABASE_ANON_KEY,
-    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-    ...(options.headers||{})
-  };
-  return fetch(url, { ...options, headers });
-}
-
-/**
- * Salva DATA no Supabase (upsert na tabela nexus_data, chave user_id='default').
- * Retorna true em caso de sucesso.
- */
-async function _uploadToSupabase(json, silent=false){
-  if(!_supabaseConfigured()) return false;
   try{
-    const r = await _supabaseFetch('/rest/v1/nexus_data', {
-      method: 'POST',
-      headers: { 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ user_id:'default', data: json, updated_at: new Date().toISOString() })
-    });
-    if(r.ok || r.status===201||r.status===200||r.status===204){
-      if(!silent) console.log('[NexusSupabase] Upload concluído:', new Date().toLocaleTimeString('pt-BR'));
-      return true;
+    return JSON.stringify(DATA).length+'_'+(DATA.movimentacoes||[]).length+'_'+(DATA.pagar||[]).length+'_'+(DATA.contas||[]).length+'_'+(DATA.gastosCartao||[]).length;
+  }catch(e){ return Date.now().toString(); }
+}
+
+/**
+ * Trata sessão expirada: limpa estado e notifica o usuário.
+ */
+function _handleTokenExpired(){
+  console.warn('[NexusSupabase] Sessão expirada. Faça login novamente.');
+  _sbSession = null;
+  _autoSyncEnabled = false;
+  stopAutoSync();
+  updateDriveStatus();
+  showToast('⚠️ Sessão expirada. Faça login novamente.','var(--amber)',6000);
+}
+
+/**
+ * Restaura sessão Supabase salva no localStorage.
+ */
+async function _sbRestoreSession(){
+  try{
+    const saved = localStorage.getItem('nexus_sb_session');
+    if(!saved) return;
+    const session = JSON.parse(saved);
+    // Verifica se o token ainda é válido (exp em segundos)
+    if(session && session.access_token && session.expires_at){
+      if(Date.now()/1000 < session.expires_at - 60){
+        _sbSession = session;
+        updateDriveStatus();
+        console.log('[NexusSupabase] Sessão restaurada do localStorage.');
+      } else {
+        // Token expirado — tenta refresh
+        await _sbRefreshSession(session.refresh_token);
+      }
     }
-    if(!silent) console.warn('[NexusSupabase] Upload falhou HTTP', r.status);
-    return false;
-  } catch(e){ console.error('[NexusSupabase] Erro no upload:', e); return false; }
+  } catch(e){ console.warn('[NexusSupabase] Erro ao restaurar sessão:', e); }
 }
 
 /**
- * Baixa DATA do Supabase.
- * Retorna o objeto parseado ou null se não encontrado.
+ * Renova token usando refresh_token.
  */
-async function _downloadFromSupabase(){
-  if(!_supabaseConfigured()) return null;
+async function _sbRefreshSession(refreshToken){
+  if(!refreshToken) return;
   try{
-    const r = await _supabaseFetch('/rest/v1/nexus_data?user_id=eq.default&select=data,updated_at&limit=1');
-    if(!r.ok){ console.warn('[NexusSupabase] Download falhou HTTP', r.status); return null; }
-    const rows = await r.json();
-    if(!rows || !rows.length) return null;
-    const raw = rows[0].data;
-    return typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch(e){ console.error('[NexusSupabase] Erro no download:', e); return null; }
+    const r = await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=refresh_token',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},
+      body:JSON.stringify({refresh_token:refreshToken})
+    });
+    if(r.ok){
+      const data = await r.json();
+      if(data.access_token){
+        _sbSession = data;
+        localStorage.setItem('nexus_sb_session', JSON.stringify(data));
+        updateDriveStatus();
+        console.log('[NexusSupabase] Token renovado com sucesso.');
+      }
+    } else {
+      localStorage.removeItem('nexus_sb_session');
+    }
+  }catch(e){ console.warn('[NexusSupabase] Erro ao renovar token:', e); }
 }
 
 /**
- * Loop de sincronização automática (a cada AUTO_SYNC_INTERVAL ms).
+ * Inicia login com e-mail e senha no Supabase.
+ * Equivalente ao connectGDrive() — mantém o nome para compatibilidade com os botões existentes.
+ */
+function connectGDrive(){
+  // Abre modal de login Supabase
+  _openSupabaseLoginModal();
+}
+
+/**
+ * Modal de login/cadastro Supabase (substitui o fluxo OAuth do Google).
+ */
+function _openSupabaseLoginModal(){
+  const h = `
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <p style="font-size:12px;color:var(--text2);margin:0;">Entre com sua conta para sincronizar seus dados em qualquer dispositivo.</p>
+      <div>
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px;">E-mail</label>
+        <input id="sbLoginEmail" type="email" placeholder="seu@email.com" style="width:100%;box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px;">Senha</label>
+        <input id="sbLoginPass" type="password" placeholder="Mínimo 6 caracteres" style="width:100%;box-sizing:border-box;">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:4px;">
+        <button class="btn btn-sm btn-emerald" onclick="_sbDoLogin()">🔐 Entrar</button>
+        <button class="btn btn-sm btn-sky" onclick="_sbDoSignup()">📝 Criar conta</button>
+      </div>
+      <div id="sbLoginMsg" style="font-size:11px;color:var(--coral);text-align:center;min-height:16px;"></div>
+    </div>`;
+  openModal('☁️ Login — Sincronização Supabase','☁️', h, null, null);
+  // Remove botão Confirmar padrão pois usamos botões próprios
+  setTimeout(()=>{
+    const footer = document.querySelector('.modal-footer');
+    if(footer) footer.style.display='none';
+  },50);
+}
+
+async function _sbDoLogin(){
+  const email = (document.getElementById('sbLoginEmail')||{}).value?.trim();
+  const pass  = (document.getElementById('sbLoginPass')||{}).value;
+  const msg   = document.getElementById('sbLoginMsg');
+  if(!email||!pass){ if(msg) msg.textContent='Preencha e-mail e senha.'; return; }
+  if(msg) msg.textContent='Entrando...';
+  try{
+    const r = await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},
+      body:JSON.stringify({email,password:pass})
+    });
+    const data = await r.json();
+    if(r.ok && data.access_token){
+      _sbSession = data;
+      localStorage.setItem('nexus_sb_session', JSON.stringify(data));
+      closeAllModals();
+      updateDriveStatus();
+      showToast('✅ Login realizado! Sincronizando dados...','var(--emerald)',4000);
+      console.log('[NexusSupabase] Login OK, user:', data.user?.email);
+      await _sbAutoRestoreOnLogin();
+      startAutoSync();
+    } else {
+      if(msg) msg.textContent = data.error_description || data.msg || 'Erro ao entrar. Verifique suas credenciais.';
+    }
+  }catch(e){
+    if(msg) msg.textContent='Erro de conexão. Verifique sua internet.';
+    console.error('[NexusSupabase] Login erro:', e);
+  }
+}
+
+async function _sbDoSignup(){
+  const email = (document.getElementById('sbLoginEmail')||{}).value?.trim();
+  const pass  = (document.getElementById('sbLoginPass')||{}).value;
+  const msg   = document.getElementById('sbLoginMsg');
+  if(!email||!pass){ if(msg) msg.textContent='Preencha e-mail e senha.'; return; }
+  if(pass.length < 6){ if(msg) msg.textContent='Senha deve ter pelo menos 6 caracteres.'; return; }
+  if(msg) msg.textContent='Criando conta...';
+  try{
+    const r = await fetch(SUPABASE_URL+'/auth/v1/signup',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},
+      body:JSON.stringify({email,password:pass})
+    });
+    const data = await r.json();
+    if(r.ok && data.access_token){
+      _sbSession = data;
+      localStorage.setItem('nexus_sb_session', JSON.stringify(data));
+      closeAllModals();
+      updateDriveStatus();
+      showToast('✅ Conta criada e conectada! Bem-vindo(a)!','var(--emerald)',4000);
+      startAutoSync();
+    } else if(r.ok && data.id){
+      // Conta criada mas requer confirmação de e-mail
+      if(msg) msg.textContent='Conta criada! Verifique seu e-mail para confirmar e então faça login.';
+    } else {
+      if(msg) msg.textContent = data.msg || data.error_description || 'Erro ao criar conta.';
+    }
+  }catch(e){
+    if(msg) msg.textContent='Erro de conexão.';
+    console.error('[NexusSupabase] Signup erro:', e);
+  }
+}
+
+/**
+ * Desconecta do Supabase (logout).
+ */
+async function disconnectSupabase(){
+  if(!_sbSession) return;
+  try{
+    await fetch(SUPABASE_URL+'/auth/v1/logout',{
+      method:'POST',
+      headers:_sbHeaders()
+    });
+  }catch(e){}
+  _sbSession = null;
+  localStorage.removeItem('nexus_sb_session');
+  stopAutoSync();
+  updateDriveStatus();
+  showToast('✅ Desconectado do Supabase.','var(--orange)',3000);
+}
+
+function dismissDriveBanner(){
+  DATA.config.driveDismissed=true;
+  const b=document.getElementById('driveBanner');
+  if(b) b.style.display='none';
+  save(true);
+}
+
+/**
+ * Faz upsert do snapshot principal no Supabase.
+ */
+async function _sbUpsertSnapshot(json, silent=false){
+  if(!_sbSession) return false;
+  try{
+    const r = await fetch(SUPABASE_URL+'/rest/v1/nexus_snapshots', {
+      method:'POST',
+      headers:{
+        ..._sbHeaders(),
+        'Prefer':'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ user_id: _sbSession.user.id, data: JSON.parse(json) })
+    });
+    if(r.status === 401){ _handleTokenExpired(); return false; }
+    return r.ok || r.status === 201 || r.status === 200;
+  }catch(e){ console.error('[NexusSupabase] Erro upsert:', e); return false; }
+}
+
+/**
+ * Busca snapshot do Supabase.
+ */
+async function _sbFetchSnapshot(){
+  if(!_sbSession) return null;
+  try{
+    const r = await fetch(
+      SUPABASE_URL+'/rest/v1/nexus_snapshots?user_id=eq.'+_sbSession.user.id+'&select=data,updated_at&limit=1',
+      { headers: _sbHeaders() }
+    );
+    if(r.status === 401){ _handleTokenExpired(); return null; }
+    if(!r.ok) return null;
+    const rows = await r.json();
+    return (rows && rows.length > 0) ? rows[0] : null;
+  }catch(e){ console.error('[NexusSupabase] Erro fetch:', e); return null; }
+}
+
+/**
+ * Loop de sincronização automática — equivalente ao _autoSyncLoop do Drive.
  */
 async function _autoSyncLoop(){
-  if(!_autoSyncEnabled || !_supabaseConfigured() || _syncInProgress) return;
+  if(!_autoSyncEnabled || !_sbSession || _syncInProgress) return;
   const currentHash = _dataHash();
   if(currentHash === _lastSyncHash) return;
   _syncInProgress = true;
   try{
-    const json = JSON.stringify(DATA, null, 2);
-    const ok = await _uploadToSupabase(json, true);
+    const json = JSON.stringify(DATA);
+    const ok = await _sbUpsertSnapshot(json, true);
     if(ok){
       _lastSyncHash = currentHash;
+      console.log('[NexusSupabase] Auto-sync concluído:', new Date().toLocaleTimeString('pt-BR'));
       _updateSyncIndicator(true);
     }
-  } catch(e){ console.error('[NexusSupabase] Erro auto-sync:', e); }
+  }catch(e){ console.error('[NexusSupabase] Erro auto-sync:', e); }
   finally{ _syncInProgress = false; }
 }
 
@@ -4618,12 +4786,12 @@ function startAutoSync(){
 
 /** Para o timer de sincronização automática. */
 function stopAutoSync(){
-  if(_autoSyncTimer){ clearInterval(_autoSyncTimer); _autoSyncTimer=null; }
+  if(_autoSyncTimer){ clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
   _autoSyncEnabled = false;
   console.log('[NexusSupabase] Auto-sync parado.');
 }
 
-/** Atualiza o indicador visual de sincronização no header. */
+/** Atualiza indicador visual de sincronização no header. */
 function _updateSyncIndicator(ok){
   const dot = document.querySelector('.saved-dot');
   if(!dot) return;
@@ -4631,103 +4799,118 @@ function _updateSyncIndicator(ok){
 }
 
 /**
- * Salva manualmente no Supabase (chamado pelo botão em Configurações).
+ * Ao conectar, verifica se há dados no Supabase e oferece restauração.
  */
-async function saveToGDrive(){
-  if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações > Supabase Sync.','var(--amber)',5000);
-  if(typeof normalizarDados==='function') DATA = normalizarDados(DATA);
-  save(true);
-  showToast('🔗 Salvando no Supabase...','var(--orange)',2000);
+async function _sbAutoRestoreOnLogin(){
+  if(!_sbSession) return;
   try{
-    const json = JSON.stringify(DATA, null, 2);
-    const ok = await _uploadToSupabase(json, false);
-    if(ok){
-      _lastSyncHash = _dataHash();
-      showToast('✅ Dados salvos no Supabase!','var(--emerald)',3500);
-    } else {
-      showToast('❌ Erro ao salvar no Supabase. Verifique URL e chave em Configurações.','var(--coral)');
-    }
-  } catch(e){ console.error('[NexusSupabase] saveToGDrive erro:', e); showToast('❌ Erro ao salvar no Supabase.','var(--coral)'); }
-}
-
-/**
- * Restaura manualmente do Supabase (chamado pelo botão em Configurações).
- */
-async function restoreFromGDrive(){
-  if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações > Supabase Sync.','var(--amber)',5000);
-  showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
-  try{
-    const parsed = await _downloadFromSupabase();
-    if(!parsed) return showToast('⚠️ Nenhum dado encontrado no Supabase. Faça um backup primeiro.','var(--amber)',5000);
+    const row = await _sbFetchSnapshot();
+    if(!row || !row.data){ console.log('[NexusSupabase] Nenhum snapshot no servidor.'); return; }
+    const parsed = row.data;
     const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
-    if(validos.length < 2) return showToast('❌ Dados no Supabase estão corrompidos ou inválidos.','var(--coral)',5000);
-    const norm = typeof normalizarDados==='function' ? normalizarDados(JSON.parse(JSON.stringify(parsed))) : parsed;
-    const total = (norm.contas||[]).length+(norm.movimentacoes||[]).length+(norm.pagar||[]).length+(norm.receber||[]).length;
-    if(!confirm(
-      `Restaurar dados do Supabase? Os dados locais atuais serão substituídos.\n\n`
-      +`Contas: ${(norm.contas||[]).length}\nMovimentações: ${(norm.movimentacoes||[]).length}\n`
-      +`A Pagar: ${(norm.pagar||[]).length}\nA Receber: ${(norm.receber||[]).length}\n`
-      +`Cartão: ${(norm.gastosCartao||[]).length} gastos\nPrevisões: ${(norm.previsoes||[]).length}\n`
-      +`Transferências: ${(norm.transferencias||[]).length}\nObjetivos: ${(norm.objetivos||[]).length}\n`
-      +`Terceiros: ${(norm.terceiros||[]).length}`
-    )) return;
-    DATA = norm;
-    save(true);
-    navigateTo('dashboard');
-    _lastSyncHash = _dataHash();
-    showToast(`✅ Dados restaurados do Supabase! (${total} registros principais)`,'var(--emerald)',4000);
-  } catch(e){ console.error('[NexusSupabase] restoreFromGDrive erro:', e); showToast('❌ Erro ao restaurar do Supabase. Tente novamente.','var(--coral)'); }
-}
+    if(validos.length < 2){ console.warn('[NexusSupabase] Snapshot inválido.'); return; }
+    const localMov   = (DATA.movimentacoes||[]).length;
+    const serverMov  = (parsed.movimentacoes||[]).length;
+    const localContas= (DATA.contas||[]).length;
+    const serverContas=(parsed.contas||[]).length;
+    const temDados   = serverContas > 0 || serverMov > 0;
+    const diferentes = localMov !== serverMov || localContas !== serverContas;
+    if(temDados && diferentes){
+      const msg = `Encontramos dados na nuvem (Supabase):
+`
+        +`• ${serverContas} conta(s)  |  Local: ${localContas}
+`
+        +`• ${serverMov} movimentação(ões)  |  Local: ${localMov}
 
-/**
- * Ao iniciar, verifica se há dados no Supabase mais recentes e oferece restauração.
- */
-async function _autoRestoreOnLogin(){
-  if(!_supabaseConfigured()) return;
-  console.log('[NexusSupabase] Verificando dados existentes no Supabase...');
-  try{
-    const parsed = await _downloadFromSupabase();
-    if(!parsed){ console.log('[NexusSupabase] Nenhum dado encontrado. Será criado na próxima sync.'); return; }
-    const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
-    if(validos.length < 2){ console.warn('[NexusSupabase] Dados no Supabase inválidos.'); return; }
-    const localMov = (DATA.movimentacoes||[]).length;
-    const remoteMov = (parsed.movimentacoes||[]).length;
-    const localContas = (DATA.contas||[]).length;
-    const remoteContas = (parsed.contas||[]).length;
-    const temDadosRemoto = remoteContas > 0 || remoteMov > 0;
-    const dadosDiferentes = localMov !== remoteMov || localContas !== remoteContas;
-    if(temDadosRemoto && dadosDiferentes){
-      const msg = `Encontramos dados no Supabase:\n`
-        +`• ${remoteContas} conta(s)  |  Local: ${localContas}\n`
-        +`• ${remoteMov} movimentação(ões)  |  Local: ${localMov}\n\n`
-        +`Deseja restaurar os dados do Supabase?\n(Os dados locais atuais serão substituídos)`;
+`
+        +`Deseja restaurar os dados da nuvem?
+(Os dados locais serão substituídos)`;
       if(confirm(msg)){
-        const norm = typeof normalizarDados==='function' ? normalizarDados(JSON.parse(JSON.stringify(parsed))) : parsed;
-        DATA = norm;
-        save(true);
-        navigateTo('dashboard');
-        _lastSyncHash = _dataHash();
-        showToast('✅ Dados restaurados do Supabase!','var(--emerald)',4000);
+        await _applySupabaseData(parsed);
+        showToast('✅ Dados restaurados da nuvem!','var(--emerald)',4000);
       } else {
         _lastSyncHash = null; // força upload dos dados locais
       }
-    } else if(temDadosRemoto){
-      console.log('[NexusSupabase] Dados em sincronia.');
+    } else {
       _lastSyncHash = _dataHash();
     }
-  } catch(e){ console.error('[NexusSupabase] Erro ao verificar dados remotos:', e); }
+  }catch(e){ console.error('[NexusSupabase] Erro ao verificar dados na nuvem:', e); }
 }
 
-/* Funções de compatibilidade para referências a Drive não substituídas */
-function connectGDrive(){
-  showToast('ℹ️ Configure Supabase URL e API Key em Configurações > Supabase Sync.','var(--sky)',5000);
-  navigateTo('config');
-}
-function dismissDriveBanner(){
-  DATA.config.supabaseDismissed=true;
-  const b=document.getElementById('driveBanner');
-  if(b) b.style.display='none';
+/**
+ * Aplica dados vindos do Supabase ao estado local.
+ */
+async function _applySupabaseData(parsed){
+  let norm;
+  if(typeof normalizarDados === 'function'){
+    norm = normalizarDados(JSON.parse(JSON.stringify(parsed)));
+  } else {
+    norm = parsed;
+    const arrays = ['contas','movimentacoes','pagar','receber','gastosCartao','objetivos',
+      'tipos','subTipos','categoriasCartao','metasGasto','historicoFatura','auditoria',
+      'terceiros','movTerceiros','previsoes','transferencias'];
+    arrays.forEach(k=>{ if(!Array.isArray(norm[k])) norm[k]=[]; });
+    if(!norm.config || typeof norm.config !== 'object') norm.config={};
+    ['nome','rendaMensal','diaFechamento','driveDismissed']
+      .forEach(k=>{ if(norm.config[k]===undefined) norm.config[k]=k==='rendaMensal'||k==='diaFechamento'?0:''; });
+  }
+  DATA = norm;
   save(true);
+  navigateTo('dashboard');
+  _lastSyncHash = _dataHash();
+}
+
+/** Salvar manualmente no Supabase (substitui saveToGDrive). */
+async function saveToGDrive(){
+  if(!_sbSession) return showToast('⚠️ Não conectado. Faça login em Configurações.','var(--amber)');
+  if(typeof normalizarDados==='function') DATA = normalizarDados(DATA);
+  save(true);
+  showToast('☁️ Salvando na nuvem (Supabase)...','var(--orange)',2000);
+  try{
+    const json = JSON.stringify(DATA);
+    const ok = await _sbUpsertSnapshot(json, false);
+    if(ok){
+      _lastSyncHash = _dataHash();
+      showToast('✅ Dados salvos na nuvem (Supabase)!','var(--emerald)',3500);
+    } else {
+      showToast('❌ Erro ao salvar na nuvem. Tente novamente.','var(--coral)');
+    }
+  }catch(e){ console.error('[NexusSupabase] saveToGDrive erro:', e); showToast('❌ Erro ao salvar.','var(--coral)'); }
+}
+
+/** Restaurar manualmente do Supabase (substitui restoreFromGDrive). */
+async function restoreFromGDrive(){
+  if(!_sbSession) return showToast('⚠️ Não conectado. Faça login em Configurações.','var(--amber)');
+  showToast('☁️ Buscando dados na nuvem (Supabase)...','var(--orange)',2000);
+  try{
+    const row = await _sbFetchSnapshot();
+    if(!row || !row.data) return showToast('⚠️ Nenhum dado encontrado na nuvem.','var(--amber)');
+    const parsed = row.data;
+    const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
+    if(validos.length < 2) return showToast('❌ Dados na nuvem inválidos ou corrompidos.','var(--coral)');
+    const norm = typeof normalizarDados==='function' ? normalizarDados(JSON.parse(JSON.stringify(parsed))) : parsed;
+    const total = (norm.contas||[]).length+(norm.movimentacoes||[]).length+(norm.pagar||[]).length+(norm.receber||[]).length;
+    if(!confirm(
+      `Restaurar dados da nuvem (Supabase)? Os dados locais serão substituídos.
+
+`
+      +`Contas: ${(norm.contas||[]).length}
+Movimentações: ${(norm.movimentacoes||[]).length}
+`
+      +`A Pagar: ${(norm.pagar||[]).length}
+A Receber: ${(norm.receber||[]).length}
+`
+      +`Cartão: ${(norm.gastosCartao||[]).length} gastos
+Previsões: ${(norm.previsoes||[]).length}
+`
+      +`Transferências: ${(norm.transferencias||[]).length}
+Objetivos: ${(norm.objetivos||[]).length}
+`
+      +`Terceiros: ${(norm.terceiros||[]).length}`
+    )) return;
+    await _applySupabaseData(parsed);
+    showToast(`✅ Dados restaurados da nuvem! (${total} registros principais)`,'var(--emerald)',4000);
+  }catch(e){ console.error('[NexusSupabase] restoreFromGDrive erro:', e); showToast('❌ Erro ao restaurar. Tente novamente.','var(--coral)'); }
 }
 
 // ================================================================
@@ -6587,29 +6770,20 @@ function renderConfig(){
     </div>
 
     <div class="config-section">
-      <div class="config-section-title">🔗 Supabase Sync</div>
+      <div class="config-section-title">☁️ Sincronização em Nuvem</div>
       <div class="info-block" style="margin-bottom:12px;">
-        Status: <strong style="color:${_supabaseConfigured()?'var(--emerald)':'var(--text2)'}">${_supabaseConfigured()?'✅ Configurado':'❌ Não configurado'}</strong>
+        Status: <strong style="color:${_sbSession?'var(--emerald)':'var(--text2)'}">
+          ${_sbSession ? '✅ Conectado — ' + (_sbSession.user?.email||'') : '❌ Não conectado'}
+        </strong>
       </div>
-      <div class="config-row"><label>Supabase URL</label><input id="cfSupabaseUrl" value="${esc(localStorage.getItem('nexus_supabase_url')||'')}" placeholder="https://xyzxyz.supabase.co"></div>
-      <div class="config-row"><label>Supabase Anon Key</label><input id="cfSupabaseKey" value="${esc(localStorage.getItem('nexus_supabase_key')||'')}" placeholder="Cole sua chave anon/public"></div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
-        <button class="btn btn-sm btn-sky" onclick="salvarSupabaseCreds()">💾 Salvar Credenciais</button>
-        <button class="btn btn-sm btn-primary" onclick="saveToGDrive()">☁ Salvar no Supabase</button>
-        <button class="btn btn-sm btn-amber" onclick="restoreFromGDrive()">⬇ Restaurar do Supabase</button>
+        <button class="btn btn-sm btn-emerald" onclick="connectGDrive()">🔗 Login / Criar Conta</button>
+        <button class="btn btn-sm btn-primary" onclick="saveToGDrive()">☁ Salvar na Nuvem</button>
+        <button class="btn btn-sm btn-amber" onclick="restoreFromGDrive()">⬇ Restaurar da Nuvem</button>
+        <button class="btn btn-sm btn-danger" onclick="disconnectSupabase()">🔌 Desconectar</button>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.6;">
-        Para configurar: (1) Crie um projeto em <strong>supabase.com</strong>; (2) Copie a URL e a chave <em>anon/public</em> de <strong>Settings → API</strong>; (3) Execute o SQL abaixo no <strong>SQL Editor</strong> do Supabase para criar a tabela necessária.
-      </div>
-      <div style="margin-top:10px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:12px;font-size:10px;font-family:'DM Mono',monospace;color:var(--text2);line-height:1.7;overflow-x:auto;">
-        -- Execute no SQL Editor do Supabase:<br>
-        CREATE TABLE IF NOT EXISTS nexus_data (<br>
-        &nbsp;&nbsp;user_id TEXT PRIMARY KEY DEFAULT 'default',<br>
-        &nbsp;&nbsp;data TEXT NOT NULL,<br>
-        &nbsp;&nbsp;updated_at TIMESTAMPTZ DEFAULT now()<br>
-        );<br>
-        ALTER TABLE nexus_data ENABLE ROW LEVEL SECURITY;<br>
-        CREATE POLICY "allow_all" ON nexus_data FOR ALL USING (true) WITH CHECK (true);
+        Para sincronizar: (1) Clique em <strong>Login / Criar Conta</strong>; (2) Informe e-mail e senha; (3) O sistema sincronizará automaticamente a cada 5 segundos.
       </div>
     </div>
   </div>
@@ -6692,20 +6866,10 @@ function salvarConfigPessoal(){
   save(true); toast('✅ Configurações salvas');
 }
 
-function salvarSupabaseCreds(){
-  const url = (document.getElementById('cfSupabaseUrl').value||'').trim();
-  const key = (document.getElementById('cfSupabaseKey').value||'').trim();
-  if(url) localStorage.setItem('nexus_supabase_url', url);
-  if(key) localStorage.setItem('nexus_supabase_key', key);
-  _loadSupabaseCreds();
-  updateDriveStatus();
-  save(true);
-  toast('✅ Credenciais Supabase salvas');
-  if(_supabaseConfigured()){ stopAutoSync(); startAutoSync(); }
+function salvarClientId(){
+  // Removido: não há mais Google Client ID. Configuração via Supabase Auth.
+  toast('ℹ️ Use o botão Login / Criar Conta para se conectar à nuvem.','var(--orange)');
 }
-
-// Mantém compatibilidade com referências legadas
-function salvarClientId(){ salvarSupabaseCreds(); }
 
 function excluirTipo(nome){
   if(!confirm('Excluir tipo "'+nome+'"?')) return;
@@ -6927,8 +7091,8 @@ function importBackup(){
         if(DATA.config.nome          === undefined) DATA.config.nome='';
         if(DATA.config.rendaMensal   === undefined) DATA.config.rendaMensal=0;
         if(DATA.config.diaFechamento === undefined) DATA.config.diaFechamento=15;
-        if(DATA.config.supabaseDismissed=== undefined) DATA.config.supabaseDismissed=false;
-        if(DATA.config.supabaseUrl=== undefined) DATA.config.supabaseUrl='';
+        if(DATA.config.driveDismissed=== undefined) DATA.config.driveDismissed=false;
+        if(DATA.config.googleClientId=== undefined) DATA.config.googleClientId='';
 
         // Migração legado: transferências internas antigas (movimentacoes com transferenciaId)
         loadData();
@@ -10415,7 +10579,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 <script>
 // ================================================================
 // Nexus One v9.1 - auditoria e correcao de backup/importacao.
-// Garante que JSON local e Supabase preservem todos os modulos e campos v9.
+// Garante que JSON local e Google Drive preservem todos os modulos e campos v9.
 // ================================================================
 (function nexusBackupV91(){
   var NEXUS_KEYS=[
@@ -10428,7 +10592,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     var d = raw && typeof raw==='object' ? raw : {};
     NEXUS_KEYS.forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
     if(!d.config || typeof d.config!=='object') d.config={};
-    var cfg={nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false,supabaseUrl:'',supabaseConfigured:false};
+    var cfg={nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false,googleClientId:'',driveConnected:false};
     Object.keys(cfg).forEach(function(k){ if(d.config[k]===undefined) d.config[k]=cfg[k]; });
     d.cartaoCicloAtual = d.cartaoCicloAtual && typeof d.cartaoCicloAtual==='object'
       ? {mes:parseInt(d.cartaoCicloAtual.mes,10)||mes(), ano:parseInt(d.cartaoCicloAtual.ano,10)||ano()}
@@ -10517,31 +10681,16 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     inp.click();
   };
 
-  var oldSaveToDrive=window.saveToGDrive;
+  // Salvar via Supabase — delegado para saveToGDrive() principal
   window.saveToGDrive=async function(){
     DATA=normalizeBackupData(DATA);
     save(true);
-    if(typeof oldSaveToDrive==='function') return oldSaveToDrive.apply(this,arguments);
+    return saveToGDrive();
   };
 
+  // Restauração via Supabase — delegada para restoreFromGDrive() principal
   window.restoreFromGDrive=async function(){
-    if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)');
-    showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
-    try{
-      var parsed = await _downloadFromSupabase();
-      if(!parsed) return showToast('Nenhum dado encontrado no Supabase.','var(--amber)');
-      if(!isValidBackup(parsed)) return showToast('Dados do Supabase inválidos.','var(--coral)');
-      var normalized=normalizeBackupData(parsed);
-      if(!confirm('Restaurar dados do Supabase? Os dados atuais serão substituídos.\n\n'+backupSummary(normalized))) return;
-      DATA=normalized;
-      save(true);
-      navigateTo('dashboard');
-      _lastSyncHash = _dataHash();
-      showToast('Dados restaurados do Supabase! ('+countBackupRecords(DATA)+' registros)','var(--emerald)',4000);
-    }catch(e){
-      console.error('Erro ao restaurar do Supabase:',e);
-      showToast('Erro ao restaurar do Supabase. Tente novamente.','var(--coral)');
-    }
+    return restoreFromGDrive();
   };
 
   DATA=normalizeBackupData(DATA);
@@ -10975,7 +11124,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 
       // config — todos os campos obrigatórios
       if(!d.config || typeof d.config !== 'object') d.config = {};
-      var cfgDefaults = {nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false,supabaseUrl:'',supabaseConfigured:false};
+      var cfgDefaults = {nome:'',rendaMensal:0,diaFechamento:15,driveDismissed:false,googleClientId:'',driveConnected:false};
       Object.keys(cfgDefaults).forEach(function(k){ if(d.config[k]===undefined) d.config[k]=cfgDefaults[k]; });
 
       // Migração v10: gastosCartao sem tipoNome → mapear via categoriasCartao
@@ -11107,42 +11256,18 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       inp.click();
     };
 
-    // ── saveToGDrive — Supabase edition (v11 override) ──
+    // ── saveToGDrive FINAL — normaliza antes de enviar ao Drive ──
+    // saveToGDrive v10.1 — delegado para implementação Supabase
     window.saveToGDrive = async function(){
-      if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)');
       DATA = normalizarDados(DATA);
       save(true);
-      showToast('🔗 Salvando no Supabase...','var(--orange)',2000);
-      try{
-        var json = JSON.stringify(DATA, null, 2);
-        var ok = await _uploadToSupabase(json, false);
-        if(ok){ _lastSyncHash = _dataHash(); showToast('✅ Dados salvos no Supabase!','var(--emerald)',3500); }
-        else showToast('❌ Erro ao salvar no Supabase. Tente novamente.','var(--coral)');
-      }catch(e){ console.error('Nexus saveToGDrive erro:',e); showToast('❌ Erro ao salvar no Supabase. Tente novamente.','var(--coral)'); }
+      return saveToGDrive();
     };
 
-    // ── restoreFromGDrive — Supabase edition (v11 override) ──
+    // ── restoreFromGDrive FINAL — usa normalizarDados(), sem chamar loadData() ──
+    // restoreFromGDrive v10.1 — delegado para implementação Supabase
     window.restoreFromGDrive = async function(){
-      if(!_supabaseConfigured()) return showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)');
-      showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
-      try{
-        var parsed = await _downloadFromSupabase();
-        if(!parsed) return showToast('⚠️ Nenhum dado encontrado no Supabase.','var(--amber)');
-        var validos = ['contas','movimentacoes','pagar','receber'].filter(function(k){return Array.isArray(parsed[k]);});
-        if(validos.length<2) return showToast('❌ Dados do Supabase inválidos ou corrompidos.','var(--coral)');
-        var norm = normalizarDados(JSON.parse(JSON.stringify(parsed)));
-        var total = norm.contas.length+norm.movimentacoes.length+norm.pagar.length+norm.receber.length;
-        if(!confirm('Restaurar dados do Supabase? Os dados atuais serão substituídos.\n\n'+
-          'Contas: '+norm.contas.length+'\nMovimentações: '+norm.movimentacoes.length+'\nA Pagar: '+norm.pagar.length+'\nA Receber: '+norm.receber.length+'\nCartão: '+norm.gastosCartao.length+' gastos\nPrevisões: '+norm.previsoes.length+'\nTransferências: '+norm.transferencias.length+'\nObjetivos: '+norm.objetivos.length+'\nTerceiros: '+norm.terceiros.length)) return;
-        DATA = norm;
-        save(true);
-        navigateTo('dashboard');
-        _lastSyncHash = _dataHash();
-        showToast('✅ Dados restaurados do Supabase! ('+total+' registros principais)','var(--emerald)',4000);
-      }catch(e){
-        console.error('Nexus restoreFromGDrive erro:',e);
-        showToast('❌ Erro ao restaurar do Supabase. Tente novamente.','var(--coral)');
-      }
+      return restoreFromGDrive();
     };
 
     // ── Aplicar normalização ao DATA atual (já carregado do localStorage) ──
@@ -11702,386 +11827,6 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   console.log('  ✓ [3] Cartão: vencimento pós-fechamento → 2º mês subsequente (dia 05)');
   console.log('  ✓ [4] Cartão: anti-duplicidade ao lançar gastos em A Pagar');
   console.log('  ✓ [5] Previsões: campo Cartão preenchido automaticamente via próxima fatura');
-
-})();
-</script>
-<script>
-// ================================================================
-// Nexus One v12.1 — Supabase edition: Backup / Importação / Sync
-// ================================================================
-(function nexusDriveFixV121(){
-  'use strict';
-
-  // ── Aguarda o DOM estar pronto antes de fazer qualquer coisa relacionada ao Drive ──
-  function _whenReady(fn){
-    if(document.readyState==='loading'){
-      document.addEventListener('DOMContentLoaded', fn);
-    } else {
-      fn();
-    }
-  }
-
-  // ── Lista completa de todos os módulos de dados ──
-  var _ALL_KEYS = [
-    'contas','movimentacoes','pagar','receber',
-    'gastosCartao','objetivos','tipos','subTipos',
-    'categoriasCartao','metasGasto','historicoFatura',
-    'auditoria','terceiros','movTerceiros','previsoes','transferencias'
-  ];
-
-  // ── Geração de resumo detalhado do backup ──
-  function _resumoBackup(d){
-    var linhas = [
-      'Contas bancárias: '     + (d.contas||[]).length,
-      'Movimentações: '        + (d.movimentacoes||[]).length,
-      'A Pagar: '              + (d.pagar||[]).length,
-      'A Receber: '            + (d.receber||[]).length,
-      'Gastos Cartão: '        + (d.gastosCartao||[]).length,
-      'Histórico Faturas: '    + (d.historicoFatura||[]).length,
-      'Objetivos: '            + (d.objetivos||[]).length,
-      'Previsões: '            + (d.previsoes||[]).length,
-      'Transferências: '       + (d.transferencias||[]).length,
-      'Terceiros (contas): '   + (d.terceiros||[]).length,
-      'Terceiros (movimentos): '+(d.movTerceiros||[]).length,
-      'Auditoria: '            + (d.auditoria||[]).length,
-      'Tipos de despesa: '     + (d.tipos||[]).length,
-      'SubTipos: '             + (d.subTipos||[]).length,
-      'Categorias Cartão: '    + (d.categoriasCartao||[]).length,
-      'Ciclo Cartão: incluído',
-      'Configurações: incluídas'
-    ];
-    return linhas.join('\n');
-  }
-
-  // ── Contagem total de registros ──
-  function _totalRegistros(d){
-    return _ALL_KEYS.reduce(function(s,k){ return s+(Array.isArray(d[k])?d[k].length:0); }, 0);
-  }
-
-  // ── Validação mínima de backup ──
-  function _isValidBackup(d){
-    if(!d || typeof d !== 'object') return false;
-    var validos = ['contas','movimentacoes','pagar','receber'].filter(function(k){
-      return Array.isArray(d[k]);
-    });
-    return validos.length >= 2;
-  }
-
-  // ── Normalização segura (usa normalizarDados se disponível, senão básica) ──
-  function _normalizar(raw){
-    var clone = JSON.parse(JSON.stringify(raw||{}));
-    if(typeof normalizarDados === 'function'){
-      try{ return normalizarDados(clone); } catch(e){ console.warn('[v12.1] normalizarDados erro:', e); }
-    }
-    _ALL_KEYS.forEach(function(k){ if(!Array.isArray(clone[k])) clone[k]=[]; });
-    if(!clone.config || typeof clone.config !== 'object') clone.config={};
-    var cfgDef = {nome:'',rendaMensal:0,diaFechamento:15,supabaseDismissed:false,supabaseUrl:'',supabaseConfigured:false};
-    Object.keys(cfgDef).forEach(function(k){ if(clone.config[k]===undefined) clone.config[k]=cfgDef[k]; });
-    if(!clone.cartaoCicloAtual || typeof clone.cartaoCicloAtual!=='object')
-      clone.cartaoCicloAtual = {mes:new Date().getMonth()+1, ano:new Date().getFullYear()};
-    return clone;
-  }
-
-  // ── Helper para mostrar diálogo de confirmação não-bloqueante quando possível ──
-  function _confirmar(mensagem, onSim, onNao){
-    if(typeof openModal === 'function'){
-      var h = '<div style="white-space:pre-wrap;font-size:12px;color:var(--text2);line-height:1.6;max-height:50vh;overflow-y:auto;">'+mensagem+'</div>';
-      openModal('Confirmar Restauração','⚠️',h, onSim, 'Restaurar', false);
-      if(onNao) {
-        // Patch do botão cancelar para chamar onNao
-        setTimeout(function(){
-          var btns = document.querySelectorAll('.modal-overlay .modal-footer .btn:not(.btn-primary)');
-          if(btns.length){
-            btns[btns.length-1].addEventListener('click', onNao, {once:true});
-          }
-        }, 80);
-      }
-    } else {
-      if(confirm(mensagem)){ onSim(); } else { if(onNao) onNao(); }
-    }
-  }
-
-  // ================================================================
-  // [A] SUPABASE — Conexão usando credenciais do próprio usuário
-  // ================================================================
-  function _getClientId(){ return ''; } // compatibilidade — não utilizado com Supabase
-
-  // Sobrescreve connectGDrive para informar sobre Supabase
-  window.connectGDrive = function(){
-    showToast('ℹ️ Configure Supabase URL e API Key em Configurações > Supabase Sync.','var(--sky)',5000);
-    if(typeof navigateTo==='function') navigateTo('config');
-  };
-
-  // ================================================================
-  // [B/C/F] OAUTH RETURN — Removido (não aplicável ao Supabase)
-  // ================================================================
-  _whenReady(function(){
-    setTimeout(function(){
-      // Nenhum token OAuth para processar com Supabase
-      // Inicia auto-sync se credenciais já estiverem configuradas
-      if(_supabaseConfigured() && typeof startAutoSync==='function'){
-        startAutoSync();
-      }
-    }, 400);
-  });
-
-  // ================================================================
-  // [E] AUTO-RESTORE NÃO BLOQUEANTE — Supabase edition
-  // ================================================================
-  async function _verificarDadosDriveNaoBlockante(){
-    if(!_supabaseConfigured()) return;
-    console.log('[NexusSupabase v12.1] Verificando dados no Supabase...');
-    try{
-      var parsed = await _downloadFromSupabase();
-      if(!parsed){ console.log('[NexusSupabase v12.1] Nenhum dado no Supabase. Iniciando auto-sync.'); _iniciarAutoSync(); return; }
-      if(!_isValidBackup(parsed)){ console.warn('[NexusSupabase v12.1] Dados no Supabase inválidos. Iniciando sync local.'); _iniciarAutoSync(); return; }
-      var localTotal = _totalRegistros(DATA);
-      var remoteTotal = _totalRegistros(parsed);
-      var temRemoto = remoteTotal > 0;
-      var saoIguais = localTotal === remoteTotal;
-      if(!temRemoto || saoIguais){
-        if(typeof _lastSyncHash !== 'undefined') window._lastSyncHash = _dataHash();
-        _iniciarAutoSync();
-        return;
-      }
-      var msg = 'Encontramos dados no Supabase:\n\n'+_resumoBackup(parsed)+
-        '\n\n─────────────────────────\nDados locais: '+localTotal+' registros\nDados no Supabase: '+remoteTotal+' registros\n\nDeseja restaurar os dados do Supabase?\n(Os dados locais atuais serão substituídos)';
-      _confirmar(msg,
-        function(){
-          var norm = _normalizar(parsed);
-          DATA = norm;
-          if(typeof save==='function') save(true);
-          if(typeof navigateTo==='function') navigateTo('dashboard');
-          if(typeof _dataHash==='function') window._lastSyncHash = _dataHash();
-          showToast('✅ Dados restaurados do Supabase! ('+_totalRegistros(norm)+' registros)','var(--emerald)',5000);
-          _iniciarAutoSync();
-        },
-        function(){
-          window._lastSyncHash = null;
-          _iniciarAutoSync();
-        }
-      );
-    } catch(e){
-      console.error('[NexusSupabase v12.1] Erro ao verificar Supabase:', e);
-      _iniciarAutoSync();
-    }
-  }
-
-  function _iniciarAutoSync(){
-    if(typeof startAutoSync === 'function'){ startAutoSync(); }
-  }
-
-  // ================================================================
-  // EXPORTBACKUP FINAL v12.1 — Validação completa pós-geração
-  // ================================================================
-  window.exportBackup = function(){
-    try{
-      // Normalizar antes de exportar
-      var dadosParaExportar = _normalizar(DATA);
-      // Atualizar DATA com versão normalizada
-      DATA = dadosParaExportar;
-      if(typeof save === 'function') save(true);
-
-      // Gerar nome do arquivo
-      var hoje2 = new Date().toISOString().split('T')[0];
-      var nomeUsr = (DATA.config.nome||'nexus').replace(/\s+/g,'-').toLowerCase().replace(/[^a-z0-9-]/g,'');
-      var nomeArq = 'nexus_backup_'+nomeUsr+'_'+hoje2+'.json';
-
-      // Serializar
-      var jsonStr = JSON.stringify(DATA, null, 2);
-
-      // Validação pós-geração
-      var parsedVerif;
-      try{ parsedVerif = JSON.parse(jsonStr); } catch(e){
-        showToast('❌ Erro ao gerar backup: JSON inválido. Contate o suporte.','var(--coral)',5000);
-        console.error('[v12.1 exportBackup] JSON inválido:', e);
-        return;
-      }
-
-      // Contagem de registros por módulo
-      var total = _totalRegistros(parsedVerif);
-      var modulos = _ALL_KEYS.filter(function(k){ return Array.isArray(parsedVerif[k]) && parsedVerif[k].length>0; });
-
-      // Gerar arquivo para download
-      if(typeof dlBlob === 'function'){
-        dlBlob(jsonStr, nomeArq, 'application/json');
-      } else {
-        var blob = new Blob([jsonStr], {type:'application/json'});
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href=url; a.download=nomeArq; a.click();
-        setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
-      }
-
-      showToast(
-        '✅ Backup realizado com sucesso! '+nomeArq+' — '+total+' registros em '+modulos.length+' módulos.',
-        'var(--emerald)', 5000
-      );
-      console.log('[v12.1 exportBackup] Backup gerado:', nomeArq, '| Total registros:', total, '| Módulos:', modulos);
-    } catch(err){
-      console.error('[v12.1 exportBackup] Erro:', err);
-      showToast('❌ Erro ao gerar backup: '+err.message,'var(--coral)',5000);
-    }
-  };
-
-  // ================================================================
-  // IMPORTBACKUP FINAL v12.1 — Sem loadData(), validação completa
-  // ================================================================
-  window.importBackup = function(){
-    var inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = '.json,application/json';
-    inp.onchange = function(){
-      var f = this.files[0];
-      if(!f) return;
-      var reader = new FileReader();
-      reader.onload = function(e){
-        try{
-          var parsed;
-          try{ parsed = JSON.parse(e.target.result); } catch(jsonErr){
-            return showToast('❌ Arquivo inválido: não é um JSON válido.','var(--coral)',5000);
-          }
-          if(!_isValidBackup(parsed)){
-            return showToast('❌ Arquivo não reconhecido como backup válido do sistema. Verifique se é um arquivo de backup Nexus.','var(--coral)',6000);
-          }
-
-          var norm = _normalizar(parsed);
-          var total = _totalRegistros(norm);
-          var resumo = _resumoBackup(norm);
-
-          _confirmar(
-            'Substituir TODOS os dados pelo arquivo importado?\n\n'+resumo+'\n\n─────────────────────────\nTotal: '+total+' registros',
-            function(){
-              // IMPORTANTE: NÃO chamar loadData() — substituição direta
-              DATA = norm;
-              if(typeof save==='function') save(true);
-              if(typeof navigateTo==='function') navigateTo('dashboard');
-              // Rerender
-              setTimeout(function(){
-                if(typeof renderDashboard==='function') renderDashboard();
-              }, 100);
-              // Validação pós-importação
-              var totalFinal = _totalRegistros(DATA);
-              showToast('✅ Dados importados com sucesso! '+totalFinal+' registros restaurados em todos os módulos.','var(--emerald)',6000);
-              console.log('[v12.1 importBackup] Importação concluída. Total:', totalFinal);
-            }
-          );
-        } catch(err){
-          console.error('[v12.1 importBackup] Erro:', err);
-          showToast('❌ Erro ao importar: arquivo inválido ou corrompido.','var(--coral)',5000);
-        }
-      };
-      reader.onerror = function(){
-        showToast('❌ Erro ao ler o arquivo. Tente novamente.','var(--coral)',4000);
-      };
-      reader.readAsText(f);
-    };
-    inp.click();
-  };
-
-  // ================================================================
-  // SAVETOGDRIVE FINAL v12.1 — Supabase edition
-  // ================================================================
-  window.saveToGDrive = async function(){
-    if(!_supabaseConfigured()){
-      showToast('⚠️ Supabase não configurado. Configure em Configurações > Supabase Sync.','var(--amber)',5000);
-      return;
-    }
-    showToast('🔗 Preparando dados para envio ao Supabase...','var(--orange)',1500);
-    try{
-      DATA = _normalizar(DATA);
-      if(typeof save==='function') save(true);
-      var json = JSON.stringify(DATA, null, 2);
-      var total = _totalRegistros(DATA);
-      var ok = await _uploadToSupabase(json, false);
-      if(ok){
-        if(typeof _dataHash==='function') window._lastSyncHash = _dataHash();
-        showToast('✅ Backup realizado e sincronizado com o Supabase! ('+total+' registros)','var(--emerald)',5000);
-      } else {
-        showToast('❌ Falha ao enviar para o Supabase. Verifique as credenciais em Configurações.','var(--coral)',5000);
-      }
-    } catch(e){
-      console.error('[v12.1-Supabase] saveToGDrive erro:', e);
-      showToast('❌ Erro ao salvar no Supabase: '+e.message,'var(--coral)',5000);
-    }
-  };
-
-  // ================================================================
-  // RESTOREFROMDRIVE FINAL v12.1 — Supabase edition
-  // ================================================================
-  window.restoreFromGDrive = async function(){
-    if(!_supabaseConfigured()){
-      showToast('⚠️ Supabase não configurado. Configure em Configurações.','var(--amber)',5000);
-      return;
-    }
-    showToast('🔗 Buscando dados no Supabase...','var(--orange)',2000);
-    try{
-      var parsed = await _downloadFromSupabase();
-      if(!parsed){
-        showToast('⚠️ Nenhum dado encontrado no Supabase. Faça um backup primeiro.','var(--amber)',5000);
-        return;
-      }
-      if(!_isValidBackup(parsed)){
-        showToast('❌ Dados no Supabase não são um backup válido do sistema.','var(--coral)',5000);
-        return;
-      }
-      var norm = _normalizar(parsed);
-      var total = _totalRegistros(norm);
-      var resumo = _resumoBackup(norm);
-      _confirmar(
-        'Restaurar dados do Supabase?\nOs dados locais atuais serão substituídos.\n\n'+resumo+'\n\n─────────────────────────\nTotal: '+total+' registros',
-        function(){
-          DATA = norm;
-          if(typeof save==='function') save(true);
-          if(typeof _dataHash==='function') window._lastSyncHash = _dataHash();
-          if(typeof navigateTo==='function') navigateTo('dashboard');
-          setTimeout(function(){ if(typeof renderDashboard==='function') renderDashboard(); }, 100);
-          showToast('✅ Dados importados com sucesso! '+total+' registros restaurados do Supabase.','var(--emerald)',6000);
-        }
-      );
-    } catch(e){
-      console.error('[v12.1-Supabase] restoreFromGDrive erro:', e);
-      showToast('❌ Erro ao restaurar do Supabase: '+e.message,'var(--coral)',5000);
-    }
-  };
-
-  // ================================================================
-  // AUTOSYNC v12.1 — Supabase edition
-  // ================================================================
-  window._autoSyncLoop = async function(){
-    if(!window._autoSyncEnabled || !_supabaseConfigured() || window._syncInProgress) return;
-    var currentHash = (typeof _dataHash==='function') ? _dataHash() : '';
-    if(currentHash && currentHash === window._lastSyncHash) return;
-    window._syncInProgress = true;
-    try{
-      var dadosSync = _normalizar(DATA);
-      DATA = dadosSync;
-      var json = JSON.stringify(DATA, null, 2);
-      var ok = await _uploadToSupabase(json, true);
-      if(ok){
-        window._lastSyncHash = currentHash;
-        if(typeof _updateSyncIndicator==='function') _updateSyncIndicator(true);
-      }
-    } catch(e){ console.error('[NexusSupabase v12.1] Erro auto-sync:', e); }
-    finally{ window._syncInProgress = false; }
-  };
-
-  // Reiniciar auto-sync se Supabase configurado
-  _whenReady(function(){
-    setTimeout(function(){
-      if(_supabaseConfigured()){
-        if(typeof stopAutoSync==='function') stopAutoSync();
-        if(typeof startAutoSync==='function') startAutoSync();
-      }
-    }, 500);
-  });
-
-  console.log('⬡ Nexus One v12.1-Supabase — Sync migrado para Supabase:');
-  console.log('  ✓ [A] Credenciais Supabase configuráveis pelo usuário (URL + Anon Key)');
-  console.log('  ✓ [B] saveToGDrive/restoreFromGDrive apontam para Supabase REST API');
-  console.log('  ✓ [C] Auto-sync: normalização + upload via Supabase upsert');
-  console.log('  ✓ [D] importBackup: sem loadData() — substituição direta de DATA');
-  console.log('  ✓ [E] exportBackup: backup JSON local preservado integralmente');
 
 })();
 </script>
