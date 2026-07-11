@@ -4080,14 +4080,22 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
   <!-- CARTÃO -->
   <div class="module" id="module-cartao">
     <div class="page-header">
-      <div class="page-title">💳 Gastos com Cartão</div>
-      <div style="display:flex;gap:8px;margin-left:auto;">
-        <button class="btn btn-danger" onclick="zerarFatura()">🔄 Zerar Fatura</button>
-      </div>
+      <div class="page-title">💳 Cartão de Crédito — Consulta e Acompanhamento</div>
     </div>
-    <div class="cat-grid" id="catGrid"></div>
-    <div class="sec-header" style="margin-top:20px;"><span class="sec-title">Resumo do Mês</span><div class="sec-line"></div></div>
-    <div class="table-wrap" id="cartaoResumo"></div>
+    <div class="info-block" style="margin-bottom:16px;">
+      Este módulo é <strong>somente consulta</strong>. Os gastos no cartão são lançados em <strong>Contas a Pagar</strong>, selecionando Forma de Pagamento = "Cartão de Crédito" e o cartão utilizado.
+    </div>
+    <div class="sec-header"><span class="sec-title">💳 Por Cartão — Fatura Atual</span><div class="sec-line"></div></div>
+    <div class="cat-grid" id="cartaoPorBanco"></div>
+
+    <div class="sec-header" style="margin-top:20px;"><span class="sec-title">🧾 Total Geral da Fatura Atual</span><div class="sec-line"></div></div>
+    <div class="grid g3" id="cartaoTotalGeral"></div>
+
+    <div class="sec-header" style="margin-top:20px;"><span class="sec-title">📊 Por Categoria — Fatura Atual</span><div class="sec-line"></div></div>
+    <div class="table-wrap" id="cartaoPorCategoria"></div>
+
+    <div class="sec-header" style="margin-top:20px;"><span class="sec-title">⏭ Próxima Fatura</span><div class="sec-line"></div></div>
+    <div class="table-wrap" id="cartaoProximaFatura"></div>
   </div>
 
   <!-- OBJETIVOS -->
@@ -4378,6 +4386,8 @@ function loadData(){
   /* === NOVO: Previsões — migração === */
   if(!Array.isArray(DATA.previsoes)) DATA.previsoes=[];
   if(!Array.isArray(DATA.transferencias)) DATA.transferencias=[];
+  // Cadastro de cartões (módulo Cartão) — garante array mesmo em restaurações antigas
+  if(!Array.isArray(DATA.cartoes)) DATA.cartoes=[];
   // Migração legado: converte antigas movs de transferência para tabela exclusiva
   !function(){
     var g={};
@@ -11240,13 +11250,13 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   (function nexusPersistenciaV10(){
 
     // ── Função central de normalização/migração — aplicada em TODOS os caminhos ──
-    function normalizarDados(d) {
+    function normalizarDados(d, pularRecriacao) {
       if(!d || typeof d !== 'object') d = {};
 
       // Garantir todos os arrays
       var ARRAYS = ['contas','movimentacoes','pagar','receber','gastosCartao','objetivos',
         'tipos','subTipos','categoriasCartao','metasGasto','historicoFatura',
-        'auditoria','terceiros','movTerceiros','previsoes','transferencias'];
+        'auditoria','terceiros','movTerceiros','previsoes','transferencias','cartoes'];
       ARRAYS.forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
 
       // cartaoCicloAtual — campo crítico que ficava fora do NEXUS_KEYS
@@ -11306,34 +11316,50 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       d.pagar = d.pagar.filter(function(p){ return !p._rascunho; });
 
       // Migração v11: gastos de cartão sem lançamento individual em A Pagar → criar
-      d.gastosCartao.forEach(function(g){
-        if(g.status==='faturado') return;
-        var jaExiste = d.pagar.some(function(p){ return p.gastoCartaoId===g.id; });
-        if(jaExiste) return;
-        var gMes=g.mes||(new Date().getMonth()+1);
-        var gAno=g.ano||(new Date().getFullYear());
-        var vMes=gMes===12?1:gMes+1, vAno=gMes===12?gAno+1:gAno;
-        var venc=vAno+'-'+(vMes<10?'0':'')+vMes+'-05';
-        var sub=g.subtipo||'';
-        var desc=g.descricao||g.tipoNome||'Cartão';
-        d.pagar.push({
-          id:'PG'+Math.random().toString(36).substr(2,9).toUpperCase(),
-          vencimento:venc,
-          descricao:'💳 Cartão: '+desc+(sub?' ('+sub+')':''),
-          tipo:g.tipoNome||'CARTAO', subtipo:sub,
-          fornecedor:'Fatura Cartão', valor:g.valor||0,
-          status:'PENDENTE', despesaTipo:'variavel',
-          origem:'CARTAO', gastoCartaoId:g.id,
-          criadoEm:g.criadoEm||new Date().toISOString()
+      // CORREÇÃO (Alteração 2): esta migração recriava em A Pagar os gastos cujo
+      // lançamento havia sido excluído manualmente pelo usuário (status
+      // 'excluido_manual', definido em excluirPagar/v13.1), pois só verificava
+      // 'faturado'. Isso fazia contas antigas/vencidas reaparecerem toda vez que
+      // normalizarDados() era executado — inclusive a cada clique em BACKUP.
+      // CORREÇÃO ADICIONAL: o botão BACKUP não deve criar/recriar nenhum
+      // registro (missão: "Após executar o backup: NÃO deve criar novos
+      // registros"). Por isso exportBackup chama normalizarDados(d, true),
+      // pulando esta migração inteiramente — o backup passa a apenas
+      // exportar os dados como estão, sem repará-los ou regenerá-los.
+      if(!pularRecriacao){
+        d.gastosCartao.forEach(function(g){
+          if(g.status==='faturado' || g.status==='excluido_manual') return;
+          var jaExiste = d.pagar.some(function(p){ return p.gastoCartaoId===g.id; });
+          if(jaExiste) return;
+          var gMes=g.mes||(new Date().getMonth()+1);
+          var gAno=g.ano||(new Date().getFullYear());
+          var vMes=gMes===12?1:gMes+1, vAno=gMes===12?gAno+1:gAno;
+          var venc=vAno+'-'+(vMes<10?'0':'')+vMes+'-05';
+          var sub=g.subtipo||'';
+          var desc=g.descricao||g.tipoNome||'Cartão';
+          d.pagar.push({
+            id:'PG'+Math.random().toString(36).substr(2,9).toUpperCase(),
+            vencimento:venc,
+            descricao:'💳 Cartão: '+desc+(sub?' ('+sub+')':''),
+            tipo:g.tipoNome||'CARTAO', subtipo:sub,
+            fornecedor:'Fatura Cartão', valor:g.valor||0,
+            status:'PENDENTE', despesaTipo:'variavel',
+            origem:'CARTAO', gastoCartaoId:g.id,
+            criadoEm:g.criadoEm||new Date().toISOString()
+          });
         });
-      });
+      }
 
       return d;
     }
 
     // ── exportBackup FINAL — normaliza antes de exportar, inclui cartaoCicloAtual ──
+    // CORREÇÃO (Alteração 2): normalizarDados(DATA, true) — o "true" pula a
+    // migração que recria lançamentos em A Pagar. O Backup passa a apenas
+    // garantir a estrutura dos dados (arrays/campos padrão) e exportar o
+    // estado atual, sem criar, duplicar ou restaurar nenhum registro.
     window.exportBackup = function(){
-      DATA = normalizarDados(DATA);
+      DATA = normalizarDados(DATA, true);
       save(true);
       var hoje2 = new Date().toISOString().split('T')[0];
       var nomeUsr = (DATA.config.nome||'nexus').replace(/\s+/g,'-').toLowerCase().replace(/[^a-z0-9-]/g,'');
@@ -12192,6 +12218,36 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     }
   })();
 
+  // ── Limpeza imediata ao carregar: remover duplicatas já geradas pelo bug ───
+  // Antes da correção acima, cada execução de normalizarDados() (ex.: clique em
+  // BACKUP) podia recriar um lançamento em A Pagar para o mesmo gastoCartaoId,
+  // gerando duplicatas com IDs diferentes. Esta limpeza é não-destrutiva: para
+  // cada gastoCartaoId com mais de um lançamento, mantém 1 (priorizando um já
+  // PAGO, para não perder baixa; senão o mais antigo) e remove os excedentes.
+  (function limpezaDuplicatasCartao() {
+    var porGasto = {};
+    (DATA.pagar || []).forEach(function(p) {
+      if (!p.gastoCartaoId) return;
+      (porGasto[p.gastoCartaoId] = porGasto[p.gastoCartaoId] || []).push(p);
+    });
+    var idsRemover = {};
+    Object.keys(porGasto).forEach(function(gid) {
+      var grupo = porGasto[gid];
+      if (grupo.length < 2) return;
+      var manter = grupo.find(function(p) { return p.status === 'PAGO'; }) ||
+        grupo.slice().sort(function(a, b) {
+          return (a.criadoEm || '').localeCompare(b.criadoEm || '');
+        })[0];
+      grupo.forEach(function(p) { if (p.id !== manter.id) idsRemover[p.id] = true; });
+    });
+    var qtd = Object.keys(idsRemover).length;
+    if (qtd > 0) {
+      DATA.pagar = (DATA.pagar || []).filter(function(p) { return !idsRemover[p.id]; });
+      if (typeof save === 'function') save(true);
+      console.log('[v13.1] Limpeza de duplicatas: ' + qtd + ' lançamento(s) duplicado(s) de cartão removido(s).');
+    }
+  })();
+
   console.log('⬡ Nexus One v13.1 — ALTERAÇÃO 001 aplicada:');
   console.log('  ✓ [1] excluirPagar: gasto recebe status="excluido_manual" — bloqueio na fonte, todas as rotas de migração ignoram');
   console.log('  ✓ [2] Guard reforçado pós-navigateTo cartão: remove recriações residuais (120ms > 50ms da migração)');
@@ -12199,6 +12255,796 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 
 })();
 </script>
+
+<script>
+// ================================================================
+// ⬡ NEXUS ONE v14.0 — EVOLUÇÃO CONTROLADA POR MÓDULO
+// Escopo: exatamente as alterações da missão "Evoluir Sistema
+// Financeiro Pessoal" — Cartão vira consulta, Contas a Pagar vira
+// fonte única, filtros com subtotal, correção de Nova Movimentação,
+// Configurações ganha cadastro de cartões, Relatórios ganha
+// Comparativo Previsto x Realizado. Nenhuma funcionalidade fora
+// deste escopo foi criada.
+// ================================================================
+(function nexusEvolucaoV14(){
+
+  // ============================================================
+  // Helper defensivo — garante DATA.cartoes íntegro sempre que usado,
+  // mesmo se algo (ex.: restauração da nuvem, backup antigo) sobrescrever
+  // DATA depois da carga inicial. Nunca deve deixar o cadastro de
+  // cartões quebrado nem lançar erro em Contas a Pagar / Cartão.
+  // ============================================================
+  function _garantirCartoes(){
+    if(!Array.isArray(DATA.cartoes)) DATA.cartoes = [];
+    if(!DATA.cartoes.length){
+      ['NUBANK','INTER','PICPAY','BB','BNB','DIGIO','AMAZON'].forEach(function(nome){
+        DATA.cartoes.push({id: genId('CRT'), nome: nome});
+      });
+      save(true);
+    }
+    return DATA.cartoes;
+  }
+
+  // ============================================================
+  // [MÓDULO 6] CONFIGURAÇÕES — Cadastro de Cartões
+  // ============================================================
+  _garantirCartoes();
+
+  // ============================================================
+  // [PRESERVAÇÃO DE DADOS] Migração não-destrutiva de Contas a Pagar
+  // Nenhum lançamento já registrado é removido. Lançamentos antigos
+  // (inclusive os do antigo fluxo "Gastos com Cartão") apenas recebem
+  // os campos novos (Forma de Pagamento / Cartão Utilizado) quando
+  // ausentes, para que continuem aparecendo corretamente em Contas a
+  // Pagar E no novo painel de Cartão — em vez de ficarem invisíveis.
+  // ============================================================
+  var CARTAO_NAO_IDENTIFICADO = 'NÃO IDENTIFICADO';
+  (function preservarDadosPagarExistentes(){
+    var precisaSalvar = false;
+    (DATA.pagar||[]).forEach(function(p){
+      if(p.formaPagamento===undefined || p.formaPagamento===null){
+        if(p.origem==='CARTAO' || p.gastoCartaoId){
+          // Veio do antigo lançamento manual de cartão — preserva o valor e
+          // classifica automaticamente como Cartão de Crédito.
+          p.formaPagamento='Cartão de Crédito';
+          if(!p.cartaoUsado) p.cartaoUsado=CARTAO_NAO_IDENTIFICADO;
+        } else {
+          // Lançamento comum já existente — preservado como estava, apenas
+          // com o campo novo em branco (o usuário pode preencher ao editar).
+          p.formaPagamento='';
+        }
+        precisaSalvar=true;
+      } else if(p.formaPagamento==='Cartão de Crédito' && !p.cartaoUsado){
+        p.cartaoUsado=CARTAO_NAO_IDENTIFICADO;
+        precisaSalvar=true;
+      }
+    });
+    // Garante que exista o cartão "NÃO IDENTIFICADO" no catálogo sempre que
+    // houver lançamentos migrados apontando para ele — assim eles continuam
+    // visíveis no painel do módulo Cartão até o usuário reclassificá-los.
+    var precisaGenerico=(DATA.pagar||[]).some(function(p){return p.cartaoUsado===CARTAO_NAO_IDENTIFICADO;});
+    if(precisaGenerico && !_garantirCartoes().some(function(c){return c.nome===CARTAO_NAO_IDENTIFICADO;})){
+      DATA.cartoes.push({id:genId('CRT'), nome:CARTAO_NAO_IDENTIFICADO});
+      precisaSalvar=true;
+    }
+    if(precisaSalvar) save(true);
+  })();
+
+  window.modalNovoCartao = function(){
+    _garantirCartoes();
+    var h = '<div class="mrow single"><div><label>Nome do Cartão</label><input id="ncCartaoNome" placeholder="Ex: Will Bank"></div></div>';
+    openModal('Novo Cartão','💳',h,function(){
+      var nome=(document.getElementById('ncCartaoNome').value||'').trim().toUpperCase();
+      if(!nome) return toast('⚠️ Nome obrigatório','var(--amber)');
+      if(DATA.cartoes.some(function(c){return c.nome===nome;})) return toast('⚠️ Cartão já cadastrado','var(--amber)');
+      DATA.cartoes.push({id:genId('CRT'), nome:nome});
+      save(true); renderConfig(); toast('✅ Cartão cadastrado'); closeAllModals();
+    });
+  };
+
+  window.editarCartaoConfig = function(id){
+    var c = _garantirCartoes().find(function(x){return x.id===id;}); if(!c) return;
+    var h = '<div class="mrow single"><div><label>Nome do Cartão</label><input id="ecCartaoNome" value="'+esc(c.nome)+'"></div></div>';
+    openModal('Editar Cartão','✏️',h,function(){
+      var novo=(document.getElementById('ecCartaoNome').value||'').trim().toUpperCase();
+      if(!novo) return toast('⚠️ Nome obrigatório','var(--amber)');
+      var antigo=c.nome;
+      DATA.pagar.filter(function(p){return p.cartaoUsado===antigo;}).forEach(function(p){p.cartaoUsado=novo;});
+      c.nome=novo;
+      save(true); renderConfig(); toast('✅ Cartão atualizado'); closeAllModals();
+    },'Salvar');
+  };
+
+  window.excluirCartaoConfig = function(id){
+    var c = _garantirCartoes().find(function(x){return x.id===id;}); if(!c) return;
+    var emUso = DATA.pagar.some(function(p){return p.cartaoUsado===c.nome && p.status!=='PAGO';});
+    var msg = emUso
+      ? 'Este cartão possui lançamentos pendentes em Contas a Pagar. Excluir o cadastro mesmo assim?'
+      : 'Excluir o cartão "'+c.nome+'"?';
+    if(!confirm(msg)) return;
+    DATA.cartoes = DATA.cartoes.filter(function(x){return x.id!==id;});
+    save(true); renderConfig(); toast('🗑 Cartão excluído');
+  };
+
+  var _origRenderConfigV14 = renderConfig;
+  window.renderConfig = renderConfig = function(){
+    _origRenderConfigV14.apply(this, arguments);
+    var col1 = document.querySelector('#configContent .grid.g2 > div:first-child');
+    if(!col1) return;
+    var old = document.getElementById('cfgCartoesSection'); if(old) old.remove();
+    var sec = document.createElement('div');
+    sec.className='config-section';
+    sec.id='cfgCartoesSection';
+    var listaCartoes = _garantirCartoes();
+    var itens = listaCartoes.map(function(ct){
+      return '<div class="cfg-item">'+
+        '<div class="cfg-item-icon">💳</div>'+
+        '<div class="cfg-item-name">'+esc(ct.nome)+'</div>'+
+        '<button class="btn btn-xs btn-edit" onclick="editarCartaoConfig(\''+ct.id+'\')">✏</button>'+
+        '<button class="btn btn-xs btn-danger" onclick="excluirCartaoConfig(\''+ct.id+'\')">🗑</button>'+
+      '</div>';
+    }).join('');
+    sec.innerHTML = '<div class="config-section-title">💳 Cartões Cadastrados</div>'+
+      itens + (!listaCartoes.length?'<div style="color:var(--text3);font-size:12px;padding:8px 0;">Nenhum cartão cadastrado</div>':'')+
+      '<button class="btn btn-sm" style="margin-top:10px;" onclick="modalNovoCartao()">+ Novo Cartão</button>';
+    col1.insertBefore(sec, col1.children[1] || null);
+  };
+
+  // ============================================================
+  // [MÓDULO 2] CONTAS A PAGAR — Forma de Pagamento + Cartão Utilizado
+  // ============================================================
+  var FORMAS_PAGAMENTO = ['PIX','Cartão de Crédito','Cartão de Débito','Dinheiro','Transferência','Outro'];
+
+  function _cartaoOptions(selecionado){
+    return _garantirCartoes().map(function(c){
+      return '<option value="'+esc(c.nome)+'" '+(c.nome===selecionado?'selected':'')+'>'+esc(c.nome)+'</option>';
+    }).join('');
+  }
+
+  window.onChangeFormaPagamentoPagar = function(prefix){
+    var fpEl = document.getElementById(prefix+'FormaPg'); if(!fpEl) return;
+    var fp = fpEl.value;
+    var wrap = document.getElementById(prefix+'CartaoWrap');
+    var lbl = document.getElementById(prefix+'VencLabel');
+    var isCredito = fp==='Cartão de Crédito';
+    if(wrap) wrap.style.display = isCredito ? '' : 'none';
+    if(lbl) lbl.textContent = isCredito ? 'Vencimento da Fatura' : 'Vencimento';
+  };
+
+  window.modalLancPagar = function(){
+    var h =
+      '<input type="hidden" id="lpDespTipo" value="fixa">'+
+      '<div class="desp-tipo-selector">'+
+        '<div class="desp-tipo-card sel-fixa" id="lpCardFixa" onclick="setDespTipo(\'fixa\')">'+
+          '<div class="desp-tipo-check" id="lpCheckFixa">✓</div>'+
+          '<div class="desp-tipo-icon">📌</div>'+
+          '<div class="desp-tipo-label">Despesa Fixa</div>'+
+          '<div class="desp-tipo-desc">Recorrente todo mês<br>Aluguel, assinatura...</div>'+
+        '</div>'+
+        '<div class="desp-tipo-card" id="lpCardVar" onclick="setDespTipo(\'variavel\')">'+
+          '<div class="desp-tipo-check" id="lpCheckVar"></div>'+
+          '<div class="desp-tipo-icon">📊</div>'+
+          '<div class="desp-tipo-label">Despesa Variável</div>'+
+          '<div class="desp-tipo-desc">Valor muda a cada mês<br>Lazer, compras...</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mrow">'+
+        '<div><label id="lpVencLabel">Vencimento</label><input id="lpVenc" type="date" value="'+hoje()+'"></div>'+
+        '<div><label>Valor R$</label><input id="lpValor" type="number" step="0.01"></div>'+
+      '</div>'+
+      '<div class="mrow">'+
+        '<div><label>Descrição</label><input id="lpDesc" placeholder="Descrição"></div>'+
+        '<div><label>Fornecedor</label><input id="lpForn" placeholder="Fornecedor"></div>'+
+      '</div>'+
+      '<div class="mrow">'+
+        '<div><label>Forma de Pagamento</label><select id="lpFormaPg" onchange="onChangeFormaPagamentoPagar(\'lp\')">'+FORMAS_PAGAMENTO.map(function(f){return '<option>'+f+'</option>';}).join('')+'</select></div>'+
+        '<div id="lpCartaoWrap" style="display:none;"><label>Cartão Utilizado</label><select id="lpCartao">'+_cartaoOptions()+'</select></div>'+
+      '</div>'+
+      '<div class="mrow">'+
+        '<div><label>Tipo</label><select id="lpTipo" onchange="atualizarSubtipo(\'lpTipo\',\'lpSubtipoContainer\',\'lpSubtipo\',\'DESPESA\')">'+DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';}).map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('')+'</select></div>'+
+        '<div><label>Documento</label><input id="lpDoc" placeholder="Nº Documento"></div>'+
+      '</div>'+
+      '<div class="subtipo-container" id="lpSubtipoContainer"><div class="mrow single"><div><label>Subtipo</label><select id="lpSubtipo"></select></div></div></div>'+
+      '<div class="mrow single"><div><label>Observação</label><textarea id="lpObs" rows="2"></textarea></div></div>'+
+      '<div style="margin-top:10px;padding:12px;background:var(--bg2);border-radius:10px;">'+
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:600;">'+
+          '<input type="checkbox" id="lpRep" onchange="toggleRepetir()"> 🔄 Repetir lançamento mensalmente'+
+        '</label>'+
+        '<div id="repOpts" style="display:none;margin-top:10px;"><div class="mrow single"><div><label>Repetir X vezes</label><input id="lpRepNum" type="number" value="3" min="2" max="60"></div></div></div>'+
+      '</div>';
+    openModal('Incluir Conta a Pagar','📤',h,function(){
+      var val=parseFloat(document.getElementById('lpValor').value);
+      var venc=document.getElementById('lpVenc').value;
+      if(!val||!venc) return toast('⚠️ Preencha vencimento e valor','var(--amber)');
+      if(!validarSubtipo('lpSubtipoContainer','lpSubtipo')) return;
+      var formaPg = document.getElementById('lpFormaPg').value;
+      var cartaoEl = document.getElementById('lpCartao');
+      var cartaoUsado = formaPg==='Cartão de Crédito' ? (cartaoEl?cartaoEl.value:'') : '';
+      if(formaPg==='Cartão de Crédito' && !cartaoUsado) return toast('⚠️ Selecione o cartão utilizado','var(--amber)');
+      var rep=document.getElementById('lpRep').checked;
+      var num=rep?parseInt(document.getElementById('lpRepNum').value)||1:1;
+      for(var i=0;i<num;i++){
+        var d=new Date(venc); d.setMonth(d.getMonth()+i);
+        DATA.pagar.push({
+          id:genId('PG'),vencimento:d.toISOString().split('T')[0],
+          descricao:(document.getElementById('lpDesc').value||(num>1?'Lançamento '+(i+1)+'/'+num:''))+(num>1?' ('+(i+1)+'/'+num+')':''),
+          tipo:document.getElementById('lpTipo').value,
+          subtipo:getSubtipoVal('lpSubtipoContainer','lpSubtipo'),
+          fornecedor:document.getElementById('lpForn').value,
+          documento:document.getElementById('lpDoc').value,obs:document.getElementById('lpObs').value,
+          despesaTipo:(document.getElementById('lpDespTipo')?document.getElementById('lpDespTipo').value:'fixa'),
+          formaPagamento:formaPg, cartaoUsado:cartaoUsado,
+          valor:val,status:'PENDENTE',criadoEm:new Date().toISOString()
+        });
+      }
+      save(true); renderPagar(); toast('✅ '+num+' lançamento(s) criado(s)'); closeAllModals();
+    });
+    window.toggleRepetir=function(){ document.getElementById('repOpts').style.display=document.getElementById('lpRep').checked?'block':'none'; };
+    setTimeout(function(){ atualizarSubtipo('lpTipo','lpSubtipoContainer','lpSubtipo','DESPESA'); },80);
+  };
+
+  window.editarPagar = function(id){
+    var p=DATA.pagar.find(function(x){return x.id===id;}); if(!p) return;
+    var formaAtual = p.formaPagamento||'PIX';
+    var h = '<div class="mrow">'+
+      '<div><label id="epVencLabel">'+(formaAtual==='Cartão de Crédito'?'Vencimento da Fatura':'Vencimento')+'</label><input id="epVenc" type="date" value="'+(p.vencimento||'')+'"></div>'+
+      '<div><label>Valor R$</label><input id="epVal" type="number" step="0.01" value="'+p.valor+'"></div>'+
+    '</div>'+
+    '<div class="mrow">'+
+      '<div><label>Descrição</label><input id="epDesc" value="'+esc(p.descricao||'')+'"></div>'+
+      '<div><label>Fornecedor</label><input id="epForn" value="'+esc(p.fornecedor||'')+'"></div>'+
+    '</div>'+
+    '<div class="mrow">'+
+      '<div><label>Forma de Pagamento</label><select id="epFormaPg" onchange="onChangeFormaPagamentoPagar(\'ep\')">'+FORMAS_PAGAMENTO.map(function(f){return '<option '+(f===formaAtual?'selected':'')+'>'+f+'</option>';}).join('')+'</select></div>'+
+      '<div id="epCartaoWrap" style="display:'+(formaAtual==='Cartão de Crédito'?'':'none')+';"><label>Cartão Utilizado</label><select id="epCartao">'+_cartaoOptions(p.cartaoUsado)+'</select></div>'+
+    '</div>'+
+    '<div class="mrow">'+
+      '<div><label>Tipo</label><select id="epTipo" onchange="atualizarSubtipo(\'epTipo\',\'epSubtipoContainer\',\'epSubtipo\',\'DESPESA\')">'+DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';}).map(function(t){return '<option '+(t.nome===p.tipo?'selected':'')+'>'+esc(t.nome)+'</option>';}).join('')+'</select></div>'+
+      '<div></div>'+
+    '</div>'+
+    '<div class="subtipo-container" id="epSubtipoContainer"><div class="mrow single"><div><label>Subtipo</label><select id="epSubtipo"></select></div></div></div>';
+    openModal('Editar Lançamento','✏️',h,function(){
+      p.vencimento=document.getElementById('epVenc').value;
+      p.valor=parseFloat(document.getElementById('epVal').value)||0;
+      p.descricao=document.getElementById('epDesc').value;
+      p.fornecedor=document.getElementById('epForn').value;
+      p.tipo=document.getElementById('epTipo').value;
+      p.subtipo=getSubtipoVal('epSubtipoContainer','epSubtipo');
+      p.formaPagamento=document.getElementById('epFormaPg').value;
+      var epCartaoEl=document.getElementById('epCartao');
+      p.cartaoUsado = p.formaPagamento==='Cartão de Crédito' ? (epCartaoEl?epCartaoEl.value:'') : '';
+      save(true); renderPagar(); toast('✅ Atualizado'); closeAllModals();
+    },'Salvar');
+    setTimeout(function(){
+      atualizarSubtipo('epTipo','epSubtipoContainer','epSubtipo','DESPESA');
+      if(p.subtipo){ var s=document.getElementById('epSubtipo'); if(s) Array.prototype.forEach.call(s.options,function(o){if(o.value===p.subtipo)o.selected=true;}); }
+    },80);
+  };
+
+  // ============================================================
+  // [MÓDULO 3] FILTRO INTELIGENTE — Contas a Pagar (com subtotal)
+  // ============================================================
+  window.renderPagar = function(){
+    var hojeStr=hoje();
+    var vencidas=DATA.pagar.filter(function(p){return p.status!=='PAGO'&&p.vencimento<hojeStr;});
+    var hojeLanc=DATA.pagar.filter(function(p){return p.status!=='PAGO'&&p.vencimento===hojeStr;});
+    var total=DATA.pagar.filter(function(p){return p.status!=='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+
+    document.getElementById('pagarTotais').innerHTML=
+      card('Total em Aberto','bg-coral','ABERTO',fmtR(total),'c-coral','Todos os lançamentos pendentes')+
+      card('Contas Vencidas','bg-coral','VENCIDAS',fmtR(vencidas.reduce(function(s,p){return s+p.valor;},0)),'c-coral',vencidas.length+' lançamento(s)')+
+      card('Vencem Hoje','bg-amber','HOJE',fmtR(hojeLanc.reduce(function(s,p){return s+p.valor;},0)),'c-amber',hojeLanc.length+' lançamento(s)');
+
+    var totalBaixadas = DATA.pagar.filter(function(p){return p.status==='PAGO';}).length;
+    var mostrandoBaixadas = !!window._pagarMostrarBaixadas;
+    var btnBaixadasLabel = mostrandoBaixadas ? '🙈 Ocultar Baixadas' : '👁 Mostrar Contas Baixadas (' + totalBaixadas + ')';
+    var btnBaixadasCls = mostrandoBaixadas ? 'btn btn-sm btn-emerald' : 'btn btn-sm';
+
+    document.getElementById('pagarFiltros').innerHTML=
+      '<input id="pfBusca" placeholder="🔍 Buscar..." style="min-width:200px;" oninput="filtrarPagarNexus()">'+
+      '<input id="pfDtIni" type="date" onchange="filtrarPagarNexus()" title="Período — Data Inicial">'+
+      '<input id="pfDtFim" type="date" onchange="filtrarPagarNexus()" title="Período — Data Final">'+
+      '<select id="pfStatus" onchange="filtrarPagarNexus()"><option value="">Todos os status</option><option value="PENDENTE">Pendente</option><option value="PAGO">Pago</option></select>'+
+      '<select id="pfFormaPg" onchange="filtrarPagarNexus()"><option value="">Forma de Pagamento (todas)</option>'+FORMAS_PAGAMENTO.map(function(f){return '<option>'+f+'</option>';}).join('')+'</select>'+
+      '<select id="pfCartao" onchange="filtrarPagarNexus()"><option value="">Cartão (todos)</option>'+_garantirCartoes().map(function(c){return '<option>'+esc(c.nome)+'</option>';}).join('')+'</select>'+
+      '<select id="pfTipo" onchange="filtrarPagarNexus()"><option value="">Todos os tipos</option>'+DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';}).map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('')+'</select>'+
+      '<button class="btn btn-sm" onclick="limparFiltrosPagarNexus()">✕ Limpar</button>'+
+      '<button class="btn btn-sm btn-sky" onclick="filtrarPagarExtraNexus(\'mes\')">Este Mês</button>'+
+      '<button class="btn btn-sm btn-danger" onclick="filtrarPagarExtraNexus(\'vencidas\')">Vencidas</button>'+
+      '<button class="'+btnBaixadasCls+'" onclick="togglePagarBaixadas()">'+btnBaixadasLabel+'</button>';
+
+    filtrarPagarNexus();
+  };
+
+  // CORREÇÃO: unifica o botão "Mostrar/Ocultar Contas Baixadas" com o módulo
+  // de filtro realmente ativo (v14 — filtrarPagarNexus), já que renderPagar
+  // foi substituído por este módulo e a versão anterior (filtrarPagarV44)
+  // deixou de ser chamada.
+  window.togglePagarBaixadas = function(){
+    window._pagarMostrarBaixadas = !window._pagarMostrarBaixadas;
+    if(typeof window.filtrarPagarNexus==='function') return window.filtrarPagarNexus();
+    if(typeof window.filtrarPagarV44==='function') return window.filtrarPagarV44();
+  };
+
+  window._filtroRapidoPagarNexus = '';
+  window.filtrarPagarExtraNexus = function(f){ window._filtroRapidoPagarNexus = f; window._pagPagarNexus=1; filtrarPagarNexus(); };
+  window.limparFiltrosPagarNexus = function(){
+    ['pfBusca','pfCartao','pfTipo'].forEach(function(id){var el=document.getElementById(id); if(el) el.value='';});
+    var st=document.getElementById('pfStatus'); if(st) st.value='';
+    var fp=document.getElementById('pfFormaPg'); if(fp) fp.value='';
+    ['pfDtIni','pfDtFim'].forEach(function(id){var el=document.getElementById(id); if(el) el.value='';});
+    window._filtroRapidoPagarNexus='';
+    window._pagPagarNexus=1;
+    filtrarPagarNexus();
+  };
+
+  window._pagPagarNexus = 1;
+  window.setPagPagar = function(p){ window._pagPagarNexus=p; filtrarPagarNexus(); };
+
+  window.filtrarPagarNexus = function(){
+    var busca=(document.getElementById('pfBusca')?document.getElementById('pfBusca').value:'').toLowerCase();
+    var status=document.getElementById('pfStatus')?document.getElementById('pfStatus').value:'';
+    var formaPg=document.getElementById('pfFormaPg')?document.getElementById('pfFormaPg').value:'';
+    var cartaoF=document.getElementById('pfCartao')?document.getElementById('pfCartao').value:'';
+    var tipoFiltro=document.getElementById('pfTipo')?document.getElementById('pfTipo').value:'';
+    var dtIni=document.getElementById('pfDtIni')?document.getElementById('pfDtIni').value:'';
+    var dtFim=document.getElementById('pfDtFim')?document.getElementById('pfDtFim').value:'';
+    var hojeStr=hoje();
+    var m2=mes(),a2=ano(),ma2=a2+'-'+pad(m2);
+    var rapido = window._filtroRapidoPagarNexus;
+    // CORREÇÃO: este módulo (v14) substituiu o renderPagar antigo sem herdar o
+    // filtro "esconder pagos por padrão" (v12). Reaplicado aqui usando a mesma
+    // flag global _pagarMostrarBaixadas, para que o comportamento seja único
+    // em todo o sistema, inclusive após importar um backup JSON.
+    var mostrarBaixadas = !!window._pagarMostrarBaixadas;
+
+    var list=DATA.pagar.filter(function(p){
+      if(rapido==='vencidas') return p.status!=='PAGO'&&p.vencimento<hojeStr;
+      if(rapido==='mes') return p.vencimento&&p.vencimento.startsWith(ma2)&&(mostrarBaixadas||status==='PAGO'||p.status!=='PAGO');
+      if(!mostrarBaixadas&&!status&&p.status==='PAGO') return false;
+      if(status&&p.status!==status) return false;
+      if(formaPg&&(p.formaPagamento||'')!==formaPg) return false;
+      if(cartaoF&&(p.cartaoUsado||'')!==cartaoF) return false;
+      if(tipoFiltro&&p.tipo!==tipoFiltro) return false;
+      if(busca&&!(p.descricao||'').toLowerCase().includes(busca)) return false;
+      if(dtIni&&p.vencimento<dtIni) return false;
+      if(dtFim&&p.vencimento>dtFim) return false;
+      return true;
+    }).sort(function(a,b){return (a.vencimento||'').localeCompare(b.vencimento||'');});
+
+    var subtotal = list.reduce(function(s,p){return s+p.valor;},0);
+    var subtotalPend = list.filter(function(p){return p.status!=='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+
+    var totalReg=list.length;
+    var _PAGE_SIZE2=(typeof _PAGE_SIZE!=='undefined')?_PAGE_SIZE:20;
+    var totalPags=Math.max(1, Math.ceil(totalReg/_PAGE_SIZE2));
+    if(window._pagPagarNexus>totalPags) window._pagPagarNexus=totalPags;
+    var offset=(window._pagPagarNexus-1)*_PAGE_SIZE2;
+    var listPag=list.slice(offset, offset+_PAGE_SIZE2);
+
+    var h='<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--surface2);border-radius:10px 10px 0 0;font-size:11.5px;flex-wrap:wrap;gap:8px;">'+
+      '<span>'+totalReg+' lançamento(s) no filtro</span>'+
+      '<span>Subtotal do filtro: <strong class="mono c-amber">'+fmtR(subtotal)+'</strong> · Pendente: <strong class="mono c-coral">'+fmtR(subtotalPend)+'</strong></span>'+
+    '</div>';
+    h+='<table><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>F. Pagamento</th><th>Cartão</th><th style="text-align:right;">Valor</th><th>Status</th><th>Ações</th></tr>';
+    if(!listPag.length) h+='<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3);">Nenhum lançamento encontrado</td></tr>';
+    listPag.forEach(function(p){
+      var stBadge,cls='';
+      if(p.status==='PAGO'){stBadge='<span class="badge bg-emerald">PAGO</span>';cls='row-paid';}
+      else if(p.vencimento<hojeStr){stBadge='<span class="badge bg-coral">VENCIDA</span>';cls='row-overdue';}
+      else if(p.vencimento===hojeStr){stBadge='<span class="badge bg-amber">HOJE</span>';cls='row-today';}
+      else stBadge='<span class="badge bg-gray">PENDENTE</span>';
+      h+='<tr class="'+cls+'">'+
+        '<td style="font-size:9px;color:var(--text3);font-family:monospace;">'+((p.id||'').substr(-8)||'—')+'</td>'+
+        '<td style="white-space:nowrap;">'+fmtD(p.vencimento)+'</td>'+
+        '<td style="font-weight:500;">'+esc(p.descricao||'—')+'</td>'+
+        '<td style="font-size:11px;color:var(--text2);">'+esc(p.tipo||'—')+'</td>'+
+        '<td style="font-size:11px;">'+esc(p.formaPagamento||'—')+'</td>'+
+        '<td style="font-size:11px;">'+(p.cartaoUsado?'💳 '+esc(p.cartaoUsado):'<span style="color:var(--text4);">—</span>')+'</td>'+
+        '<td class="mono c-coral" style="text-align:right;font-weight:600;">'+fmtR(p.valor)+'</td>'+
+        '<td>'+stBadge+'</td>'+
+        '<td style="white-space:nowrap;">'+
+          (p.status!=='PAGO'?'<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar(\''+p.id+'\')">✓ Baixa</button> ':'')+
+          '<button class="btn btn-xs btn-edit" onclick="editarPagar(\''+p.id+'\')">✏</button>'+
+          '<button class="btn btn-xs btn-danger" onclick="excluirPagar(\''+p.id+'\')">🗑</button>'+
+        '</td></tr>';
+    });
+    h+='</table>';
+    if(typeof renderPaginacao==='function') h += renderPaginacao(totalReg, window._pagPagarNexus, 'setPagPagar', 'pagarTabela');
+    document.getElementById('pagarTabela').innerHTML=h;
+  };
+
+  // ============================================================
+  // [MÓDULO 4] CONTAS E MOVIMENTAÇÕES — correções e forma de pagamento
+  // ============================================================
+  var FORMAS_PAGAMENTO_MOV = ['PIX','Cartão de Crédito','Transferência','Dinheiro','Outro'];
+
+  window.modalMovimentacao = function(){
+    if(!DATA.contas.length) return toast('⚠️ Crie uma conta primeiro','var(--amber)');
+    var tiposDesp=DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';});
+    var tiposRec=DATA.tipos.filter(function(t){return t.classificacao==='RECEITA';});
+    var contaPadrao = contaSel || DATA.contas[0].id;
+    var h = '<div class="op-select" id="opSelectNew">'+
+      '<div class="op-btn active-despesa" id="opDN" onclick="setOpNew(\'DESPESA\')"><div class="op-btn-icon">⬇</div>DESPESA</div>'+
+      '<div class="op-btn" id="opRN" onclick="setOpNew(\'RECEITA\')"><div class="op-btn-icon">⬆</div>RECEITA</div>'+
+    '</div>'+
+    '<input type="hidden" id="opTipoNew" value="DESPESA">'+
+    '<div class="mrow">'+
+      '<div><label>Data</label><input id="nmData" type="date" value="'+hoje()+'"></div>'+
+      '<div><label>Valor R$</label><input id="nmValor" type="number" step="0.01" min="0.01"></div>'+
+    '</div>'+
+    '<div class="mrow single"><div><label>Descrição</label><input id="nmDesc" placeholder="Descrição da movimentação"></div></div>'+
+    '<div class="mrow">'+
+      '<div><label>Conta</label><select id="nmConta">'+DATA.contas.map(function(c){return '<option value="'+c.id+'" '+(c.id===contaPadrao?'selected':'')+'>'+esc(c.emoji||'')+' '+esc(c.nome)+'</option>';}).join('')+'</select></div>'+
+      '<div><label>Tipo/Categoria</label><select id="nmTipo" onchange="atualizarSubtipo(\'nmTipo\',\'nmSubtipoContainer\',\'nmSubtipo\',document.getElementById(\'opTipoNew\').value)">'+tiposDesp.map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('')+'</select></div>'+
+    '</div>'+
+    '<div class="subtipo-container" id="nmSubtipoContainer"><div class="mrow single"><div><label>Subtipo</label><select id="nmSubtipo"></select></div></div></div>'+
+    '<div class="mrow">'+
+      '<div><label>Forma de Pagamento</label><select id="nmFormaPg">'+FORMAS_PAGAMENTO_MOV.map(function(f){return '<option>'+f+'</option>';}).join('')+'</select></div>'+
+      '<div><label>Fornecedor/Origem</label><input id="nmForn" placeholder="Opcional"></div>'+
+    '</div>'+
+    '<div class="mrow single"><div><label>Recorrente</label><select id="nmRec"><option value="">Não</option><option value="mensal">Mensal</option><option value="anual">Anual</option></select></div></div>'+
+    '<div class="mrow single"><div><label>Observação</label><textarea id="nmObs" rows="2" placeholder="Opcional"></textarea></div></div>';
+    openModal('Nova Movimentação','💸',h,function(){
+      var val=parseFloat(document.getElementById('nmValor').value);
+      var data=document.getElementById('nmData').value;
+      var desc=document.getElementById('nmDesc').value.trim();
+      if(!val||val<=0||!data||!desc) return toast('⚠️ Preencha data, valor e descrição','var(--amber)');
+      if(!validarSubtipo('nmSubtipoContainer','nmSubtipo')) return;
+      var tipo=document.getElementById('opTipoNew').value;
+      DATA.movimentacoes.push({
+        id:genId('MOV'),contaId:document.getElementById('nmConta').value,
+        tipoOp:tipo,data,descricao:desc,
+        tipo:document.getElementById('nmTipo').value,
+        subtipo:getSubtipoVal('nmSubtipoContainer','nmSubtipo'),
+        formaPagamento:document.getElementById('nmFormaPg').value,
+        fornecedor:document.getElementById('nmForn').value,
+        obs:document.getElementById('nmObs').value,
+        recorrente:document.getElementById('nmRec').value,
+        valor:val,status:'ATIVO',criadoEm:new Date().toISOString()
+      });
+      save(true); renderContas(); toast('✅ Movimentação registrada'); closeAllModals();
+    });
+    window.setOpNew=function(op){
+      document.getElementById('opTipoNew').value=op;
+      document.getElementById('opDN').className='op-btn'+(op==='DESPESA'?' active-despesa':'');
+      document.getElementById('opRN').className='op-btn'+(op==='RECEITA'?' active-receita':'');
+      var tipos=op==='DESPESA'?tiposDesp:tiposRec;
+      document.getElementById('nmTipo').innerHTML=tipos.map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('');
+      atualizarSubtipo('nmTipo','nmSubtipoContainer','nmSubtipo',op);
+    };
+    setTimeout(function(){ atualizarSubtipo('nmTipo','nmSubtipoContainer','nmSubtipo','DESPESA'); },80);
+  };
+
+  // Filtro por Forma de Pagamento no extrato, com subtotal — reconstrói a tabela
+  // preservando paginação (10/página), toggle de anulados e de transferências.
+  window._pagContasNexus = 1;
+  window._contaAnterior = null;
+  window._contaFiltroFormaPg = '';
+  window.setPagContas = function(p){ window._pagContasNexus=p; renderContaDetail(contaSel); };
+  window.filtrarContaPorFormaPg = function(){
+    window._contaFiltroFormaPg = document.getElementById('cdFiltroFormaPg').value;
+    window._pagContasNexus = 1;
+    renderContaDetail(contaSel);
+  };
+
+  window.renderContaDetail = function(id){
+    var c=DATA.contas.find(function(x){return x.id===id;}); if(!c) return;
+    if(id!==window._contaAnterior){ window._pagContasNexus=1; window._contaAnterior=id; }
+    var saldo=saldoConta(id);
+    var showAnul=window._showAnul||false;
+    var showTrf=window._showTrf||false;
+    var filtroFP=window._contaFiltroFormaPg||'';
+
+    var movsAll=DATA.movimentacoes.filter(function(m){return m.contaId===id&&m.tipo!=='Transferência';})
+      .sort(function(a,b){return b.data.localeCompare(a.data);});
+    var movsFull=showAnul?movsAll:movsAll.filter(function(m){return m.status!=='ANULADO';});
+    if(filtroFP) movsFull=movsFull.filter(function(m){return (m.formaPagamento||'')===filtroFP;});
+
+    var subtotalDesp=movsFull.filter(function(m){return m.tipoOp==='DESPESA';}).reduce(function(s,m){return s+m.valor;},0);
+    var subtotalRec=movsFull.filter(function(m){return m.tipoOp==='RECEITA';}).reduce(function(s,m){return s+m.valor;},0);
+
+    var trfsOut=(DATA.transferencias||[]).filter(function(t){return t.contaOrigemId===id&&t.status!=='ANULADO';});
+    var trfsIn=(DATA.transferencias||[]).filter(function(t){return t.contaDestinoId===id&&t.status!=='ANULADO';});
+    var nTrfs=trfsOut.length+trfsIn.length;
+
+    var _PAGE_SIZE2=(typeof _PAGE_SIZE!=='undefined')?_PAGE_SIZE:10;
+    var totalReg=movsFull.length;
+    var totalPags=Math.max(1,Math.ceil(totalReg/_PAGE_SIZE2));
+    if(window._pagContasNexus>totalPags) window._pagContasNexus=totalPags;
+    var offset=(window._pagContasNexus-1)*_PAGE_SIZE2;
+    var movsPag=movsFull.slice(offset, offset+_PAGE_SIZE2);
+
+    var rowsMovs='';
+    if(!movsPag.length){
+      rowsMovs='<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3);">Nenhuma movimentação</td></tr>';
+    } else {
+      movsPag.forEach(function(m){
+        var isAnul=m.status==='ANULADO';
+        var rowCls=isAnul?'row-anulado':'';
+        var badge=isAnul?'<span class="badge badge-anulado">ANULADO</span>':'<span class="badge badge-ativo">ATIVO</span>';
+        var cor=m.tipoOp==='RECEITA'?'c-emerald':'c-coral';
+        var sinal=m.tipoOp==='RECEITA'?'+':'-';
+        var subtipoHtml=m.subtipo?('<span class="subtipo-tag" style="'+(m.tipoOp==='RECEITA'?'background:rgba(0,229,160,.1);color:var(--emerald);border-color:rgba(0,229,160,.2);':'')+'">'+esc(m.subtipo)+'</span>'):'<span style="color:var(--text4);">—</span>';
+        rowsMovs+='<tr class="'+rowCls+'">'+
+          '<td style="white-space:nowrap;">'+fmtD(m.data)+'</td>'+
+          '<td><span class="badge '+(m.tipoOp==='RECEITA'?'bg-emerald':'bg-coral')+'">'+m.tipoOp+'</span></td>'+
+          '<td style="font-weight:500;">'+esc(m.descricao||'—')+'</td>'+
+          '<td style="font-size:11px;color:var(--text2);">'+esc(m.tipo||'—')+'</td>'+
+          '<td style="font-size:10px;">'+subtipoHtml+'</td>'+
+          '<td style="font-size:11px;">'+esc(m.formaPagamento||'—')+'</td>'+
+          '<td class="mono '+cor+'" style="text-align:right;font-weight:700;">'+sinal+fmtR(m.valor)+'</td>'+
+          '<td>'+badge+'</td>'+
+          '<td style="white-space:nowrap;">'+
+            (!isAnul?'<button class="btn btn-xs btn-edit" onclick="editarMovimentacao(\''+m.id+'\')">✏</button> <button class="btn btn-xs btn-amber" onclick="anularMovimentacao(\''+m.id+'\')" title="Anular">⊘</button>':'')+
+            ' <button class="btn btn-xs btn-danger" onclick="excluirMovimentacao(\''+m.id+'\')">🗑</button>'+
+          '</td></tr>';
+      });
+    }
+
+    var rowsTrf='';
+    if(showTrf){
+      trfsOut.forEach(function(t){
+        var dc=DATA.contas.find(function(x){return x.id===t.contaDestinoId;});
+        rowsTrf+='<tr style="background:rgba(155,109,255,.04);">'+
+          '<td style="white-space:nowrap;">'+fmtD(t.data)+'</td>'+
+          '<td><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.15);color:var(--violet);border:1px solid rgba(155,109,255,.3);font-weight:700;">🔁 TRANSF.</span></td>'+
+          '<td style="font-weight:500;color:var(--violet);">→ '+(dc?esc(dc.emoji||'')+' '+esc(dc.nome):'?')+' — '+esc(t.descricao||'')+'</td>'+
+          '<td style="font-size:11px;color:var(--text3);">Transferência Interna</td>'+
+          '<td><span style="color:var(--text4);">—</span></td>'+
+          '<td><span style="color:var(--text4);">—</span></td>'+
+          '<td class="mono c-coral" style="text-align:right;font-weight:700;">-'+fmtR(t.valor)+'</td>'+
+          '<td><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.08);color:var(--violet);">INTERNO</span></td>'+
+          '<td><button class="btn btn-xs btn-danger" onclick="excluirTrf(\''+t.id+'\')">🗑</button></td>'+
+        '</tr>';
+      });
+      trfsIn.forEach(function(t){
+        var oc=DATA.contas.find(function(x){return x.id===t.contaOrigemId;});
+        rowsTrf+='<tr style="background:rgba(0,229,160,.03);">'+
+          '<td style="white-space:nowrap;">'+fmtD(t.data)+'</td>'+
+          '<td><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.15);color:var(--violet);border:1px solid rgba(155,109,255,.3);font-weight:700;">🔁 TRANSF.</span></td>'+
+          '<td style="font-weight:500;color:var(--emerald);">← '+(oc?esc(oc.emoji||'')+' '+esc(oc.nome):'?')+' — '+esc(t.descricao||'')+'</td>'+
+          '<td style="font-size:11px;color:var(--text3);">Transferência Interna</td>'+
+          '<td><span style="color:var(--text4);">—</span></td>'+
+          '<td><span style="color:var(--text4);">—</span></td>'+
+          '<td class="mono c-emerald" style="text-align:right;font-weight:700;">+'+fmtR(t.valor)+'</td>'+
+          '<td><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.08);color:var(--violet);">INTERNO</span></td>'+
+          '<td>—</td>'+
+        '</tr>';
+      });
+    }
+
+    var infoCount = totalReg>0
+      ? '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface2);font-size:10px;color:var(--text3);border-radius:8px 8px 0 0;flex-wrap:wrap;gap:6px;">'+
+          '<span>Exibindo '+(offset+1)+' – '+Math.min(offset+_PAGE_SIZE2,totalReg)+' de '+totalReg+' movimentações</span>'+
+          '<span>Página '+window._pagContasNexus+' / '+totalPags+'</span>'+
+        '</div>'
+      : '';
+
+    var subtotalBar = filtroFP
+      ? '<div style="padding:8px 12px;background:var(--surface2);border-radius:8px;margin-bottom:10px;font-size:11.5px;display:flex;gap:16px;flex-wrap:wrap;">'+
+          '<span>Filtro: <strong>'+esc(filtroFP)+'</strong></span>'+
+          '<span>Despesas: <strong class="mono c-coral">'+fmtR(subtotalDesp)+'</strong></span>'+
+          '<span>Receitas: <strong class="mono c-emerald">'+fmtR(subtotalRec)+'</strong></span>'+
+        '</div>'
+      : '';
+
+    document.getElementById('contaDetail').innerHTML=
+      '<div class="card" style="margin-bottom:16px;">'+
+        '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">'+
+          '<div style="font-size:36px;">'+esc(c.emoji||'🏦')+'</div>'+
+          '<div style="flex:1;">'+
+            '<div style="font-size:18px;font-weight:800;">'+esc(c.nome)+'</div>'+
+            '<div style="font-size:11px;color:var(--text3);">'+esc(c.tipo||'')+' · Saldo inicial: '+fmtR(c.saldoInicial)+'</div>'+
+          '</div>'+
+          '<div>'+
+            '<div style="font-size:12px;color:var(--text3);margin-bottom:2px;">Saldo Atual</div>'+
+            '<div class="mono '+(saldo>=0?'c-emerald':'c-coral')+'" style="font-size:26px;font-weight:800;">'+fmtR(saldo)+'</div>'+
+          '</div>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+
+            '<button class="btn btn-xs btn-edit" onclick="editarConta(\''+id+'\')">✏ Editar</button>'+
+            '<button class="btn btn-xs btn-danger" onclick="excluirConta(\''+id+'\')">🗑 Excluir</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">'+
+        '<div class="sec-title">Extrato</div>'+
+        '<span class="show-anulados-toggle" onclick="toggleAnulados()">'+(showAnul?'Ocultar anulados':'Mostrar anulados')+'</span>'+
+        '<span class="show-anulados-toggle" onclick="toggleTransferencias()" style="background:'+(showTrf?'rgba(155,109,255,.15)':'rgba(155,109,255,.05)')+';color:var(--violet);border-color:rgba(155,109,255,.3);">🔁 '+(showTrf?'Ocultar':'Mostrar')+' transferências ('+nTrfs+')</span>'+
+        '<select id="cdFiltroFormaPg" onchange="filtrarContaPorFormaPg()" style="margin-left:auto;"><option value="">Forma de Pagamento (todas)</option>'+
+          FORMAS_PAGAMENTO_MOV.map(function(f){return '<option '+(f===filtroFP?'selected':'')+'>'+f+'</option>';}).join('')+
+        '</select>'+
+      '</div>'+
+      subtotalBar+
+      infoCount+
+      '<div class="table-wrap"><table>'+
+        '<tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Subtipo</th><th>F. Pagamento</th><th style="text-align:right;">Valor</th><th>Status</th><th>Ações</th></tr>'+
+        rowsMovs+rowsTrf+
+      '</table></div>'+
+      (typeof renderPaginacao==='function'?renderPaginacao(totalReg, window._pagContasNexus, 'setPagContas', 'contaDetail'):'');
+  };
+
+  // ============================================================
+  // [MÓDULO 1] CARTÃO — somente consulta, alimentado por Contas a Pagar
+  // ============================================================
+  function _cicloCartao(cartaoNome){
+    var lancs=DATA.pagar.filter(function(p){
+      return p.formaPagamento==='Cartão de Crédito' && p.cartaoUsado===cartaoNome && p.status!=='PAGO' && p.vencimento;
+    });
+    if(!lancs.length) return {atual:[], proxima:[], atualKey:null};
+    var minVenc=lancs.reduce(function(m,p){return (!m||p.vencimento<m)?p.vencimento:m;}, null);
+    var atualKey=minVenc.substr(0,7);
+    var atual=lancs.filter(function(p){return p.vencimento.substr(0,7)<=atualKey;});
+    var proxima=lancs.filter(function(p){return p.vencimento.substr(0,7)>atualKey;});
+    return {atual:atual, proxima:proxima, atualKey:atualKey};
+  }
+
+  window.renderCartao = function(){
+    var grid=document.getElementById('cartaoPorBanco'); if(!grid) return;
+    var cartoes=DATA.cartoes.slice();
+    var totalGeral=0;
+    var porCategoria={};
+    var proximaPorCartao={};
+
+    var htmlBancos=cartoes.map(function(ct){
+      var ciclo=_cicloCartao(ct.nome);
+      var totalAtual=ciclo.atual.reduce(function(s,p){return s+p.valor;},0);
+      var totalProxima=ciclo.proxima.reduce(function(s,p){return s+p.valor;},0);
+      totalGeral+=totalAtual;
+      proximaPorCartao[ct.nome]=totalProxima;
+      ciclo.atual.forEach(function(p){
+        var cat=p.tipo||'Outros';
+        porCategoria[cat]=porCategoria[cat]||{};
+        porCategoria[cat][ct.nome]=(porCategoria[cat][ct.nome]||0)+p.valor;
+      });
+      return '<div class="cat-card">'+
+        '<div class="cat-emoji">💳</div>'+
+        '<div class="cat-name">'+esc(ct.nome)+'</div>'+
+        '<div class="cat-val c-amber">'+fmtR(totalAtual)+'</div>'+
+        '<div style="font-size:9px;color:var(--text3);margin-top:4px;">'+ciclo.atual.length+' lançamento(s)'+(ciclo.atualKey?' · fatura '+ciclo.atualKey.split('-').reverse().join('/'):'')+'</div>'+
+      '</div>';
+    }).join('');
+    grid.innerHTML=htmlBancos||'<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">💳</div><div class="empty-title">Nenhum cartão cadastrado</div><div class="empty-sub">Cadastre cartões em Configurações</div></div>';
+
+    var tg=document.getElementById('cartaoTotalGeral');
+    if(tg){
+      var linhas=cartoes.map(function(ct){
+        var ciclo=_cicloCartao(ct.nome);
+        var t=ciclo.atual.reduce(function(s,p){return s+p.valor;},0);
+        return card(ct.nome,'bg-sky','',fmtR(t),'c-amber','Fatura atual');
+      }).join('');
+      tg.innerHTML=linhas+card('TOTAL DA FATURA','bg-orange','GERAL',fmtR(totalGeral),'c-orange','Soma de todos os cartões');
+    }
+
+    var pc=document.getElementById('cartaoPorCategoria');
+    if(pc){
+      var cats=Object.keys(porCategoria);
+      var h='<table><tr><th>Categoria</th>'+cartoes.map(function(c){return '<th style="text-align:right;">'+esc(c.nome)+'</th>';}).join('')+'<th style="text-align:right;">Total</th></tr>';
+      if(!cats.length) h+='<tr><td colspan="'+(cartoes.length+2)+'" style="text-align:center;padding:20px;color:var(--text3);">Nenhum gasto de cartão na fatura atual</td></tr>';
+      var totCatGeral=0;
+      cats.sort(function(a,b){
+        var ta=Object.values(porCategoria[a]).reduce(function(s,v){return s+v;},0);
+        var tb=Object.values(porCategoria[b]).reduce(function(s,v){return s+v;},0);
+        return tb-ta;
+      }).forEach(function(cat){
+        var linhaTotal=0;
+        h+='<tr><td>'+esc(cat)+'</td>';
+        cartoes.forEach(function(ct){
+          var v=porCategoria[cat][ct.nome]||0;
+          linhaTotal+=v;
+          h+='<td class="mono" style="text-align:right;'+(v>0?'color:var(--amber);':'color:var(--text4);')+'">'+(v>0?fmtR(v):'—')+'</td>';
+        });
+        totCatGeral+=linhaTotal;
+        h+='<td class="mono c-amber" style="text-align:right;font-weight:700;">'+fmtR(linhaTotal)+'</td></tr>';
+      });
+      h+='<tr class="tr-totais"><td>TOTAL</td>'+cartoes.map(function(){return '<td></td>';}).join('')+'<td class="mono" style="text-align:right;">'+fmtR(totCatGeral)+'</td></tr>';
+      h+='</table>';
+      pc.innerHTML=h;
+    }
+
+    var pf=document.getElementById('cartaoProximaFatura');
+    if(pf){
+      var totalProximaGeral=0;
+      var h2='<table><tr><th>Cartão</th><th style="text-align:right;">Próxima Fatura</th></tr>';
+      cartoes.forEach(function(ct){
+        var v=proximaPorCartao[ct.nome]||0;
+        totalProximaGeral+=v;
+        h2+='<tr><td>💳 '+esc(ct.nome)+'</td><td class="mono" style="text-align:right;'+(v>0?'color:var(--sky);':'color:var(--text4);')+'">'+(v>0?fmtR(v):'—')+'</td></tr>';
+      });
+      h2+='<tr class="tr-totais"><td>TOTAL PRÓXIMA FATURA</td><td class="mono" style="text-align:right;">'+fmtR(totalProximaGeral)+'</td></tr></table>';
+      pf.innerHTML=h2;
+    }
+  };
+
+  // Zerar Fatura e lançamento manual de cartão: desativados (botão removido do HTML).
+  // As funções abaixo permanecem apenas como aviso de compatibilidade, caso algum
+  // atalho/legado antigo ainda tente chamá-las.
+  window.zerarFatura = function(){
+    toast('ℹ️ O Cartão não realiza mais fechamento manual de fatura — o cálculo é automático a partir de Contas a Pagar.','var(--orange)');
+  };
+  window.modalGasto = function(){
+    toast('ℹ️ Lance despesas de cartão em Contas a Pagar, com Forma de Pagamento = "Cartão de Crédito".','var(--orange)');
+  };
+  if(typeof window.modalGastoCartaoV10!=='undefined') window.modalGastoCartaoV10 = window.modalGasto;
+
+  // ============================================================
+  // [MÓDULO 5] RELATÓRIOS — Comparativo Previsto x Realizado
+  // ============================================================
+  var _origRenderRelatoriosV14 = renderRelatorios;
+  window.renderRelatorios = renderRelatorios = function(){
+    _origRenderRelatoriosV14.apply(this, arguments);
+    setTimeout(function(){
+      var rg=document.getElementById('relGrid');
+      if(rg && !document.getElementById('relCardPrevistoRealizado')){
+        var d=document.createElement('div');
+        d.className='card'; d.id='relCardPrevistoRealizado'; d.style.cursor='pointer';
+        d.onclick=function(){ relPrevistoRealizadoNexus(); };
+        d.innerHTML='<div style="font-size:32px;margin-bottom:12px;">📐</div>'+
+          '<div style="font-size:14px;font-weight:700;margin-bottom:5px;">Comparativo Previsto x Realizado</div>'+
+          '<div style="font-size:11px;color:var(--text3);">Por categoria · Diferença · Onde estourou o orçamento</div>';
+        rg.appendChild(d);
+      }
+    },100);
+  };
+
+  window.relPrevistoRealizadoNexus = function(){
+    var c=document.getElementById('relContent'); if(!c) return;
+    var m2=mes(),a2=ano(), key=a2+'-'+pad(m2), ma=key;
+    var tiposDesp=DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';});
+    function previsto(tipoNome){
+      var p=(DATA.previsoes||[]).find(function(x){return x.tipo===tipoNome&&x.mesAno===key;});
+      return p?(p.valorPrevisto||0):0;
+    }
+    function realizado(tipoNome){
+      var movs=(DATA.movimentacoes||[]).filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo===tipoNome&&x.data&&x.data.startsWith(ma);}).reduce(function(s,x){return s+x.valor;},0);
+      var pagPendente=(DATA.pagar||[]).filter(function(p){return p.tipo===tipoNome&&p.status!=='PAGO'&&p.vencimento&&p.vencimento.startsWith(ma);}).reduce(function(s,p){return s+p.valor;},0);
+      return movs+pagPendente;
+    }
+    var linhas=tiposDesp.map(function(t){
+      var prev=previsto(t.nome), real=realizado(t.nome), diff=prev-real;
+      return {tipo:t.nome, prev:prev, real:real, diff:diff};
+    }).filter(function(l){return l.prev>0||l.real>0;});
+    linhas.sort(function(a,b){return a.diff-b.diff;});
+
+    var h='<div class="adv-report-card" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;">'+
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:2.5px;color:var(--orange);font-weight:700;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">📐 Comparativo Previsto x Realizado — '+nomeMesFull(m2)+'/'+a2+'</div>'+
+      '<div class="table-wrap"><table><tr><th>Categoria</th><th style="text-align:right;">Previsto</th><th style="text-align:right;">Realizado</th><th style="text-align:right;">Diferença</th></tr>';
+    if(!linhas.length) h+='<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text3);">Sem previsões ou lançamentos neste mês</td></tr>';
+    linhas.forEach(function(l){
+      var cor=l.diff<0?'var(--coral)':'var(--emerald)';
+      h+='<tr><td>'+esc(l.tipo)+'</td>'+
+        '<td class="mono" style="text-align:right;">'+(l.prev>0?fmtR(l.prev):'—')+'</td>'+
+        '<td class="mono c-amber" style="text-align:right;">'+fmtR(l.real)+'</td>'+
+        '<td class="mono" style="text-align:right;color:'+cor+';font-weight:700;">'+(l.diff>=0?'+':'')+fmtR(l.diff)+'</td></tr>';
+    });
+    h+='</table></div>';
+
+    var estourou=linhas.filter(function(l){return l.prev>0 && l.diff<0;}).sort(function(a,b){return a.diff-b.diff;});
+    h+='<div class="n9note" style="margin-top:14px;font-size:12px;line-height:1.7;">';
+    if(estourou.length){
+      h+='<strong>⚠️ Categorias que ultrapassaram o previsto:</strong><br>';
+      estourou.forEach(function(l){
+        h+='• <strong>'+esc(l.tipo)+'</strong>: excedeu em '+fmtR(Math.abs(l.diff))+' (previsto '+fmtR(l.prev)+', realizado '+fmtR(l.real)+')<br>';
+      });
+    } else {
+      h+='✅ Nenhuma categoria com previsão cadastrada ultrapassou o valor previsto neste mês.';
+    }
+    h+='</div></div>';
+    c.innerHTML=h;
+    c.scrollIntoView({behavior:'smooth'});
+  };
+
+  console.log('⬡ Nexus One v14.0 — Evolução controlada aplicada:');
+  console.log('  ✓ [Módulo 1] Cartão: somente consulta, alimentado por Contas a Pagar (Fatura Atual / Próxima Fatura)');
+  console.log('  ✓ [Módulo 2] Contas a Pagar: Forma de Pagamento + Cartão Utilizado');
+  console.log('  ✓ [Módulo 3] Contas a Pagar: filtros com subtotal (forma pagamento, cartão, período)');
+  console.log('  ✓ [Módulo 4] Contas: Nova Movimentação respeita a conta selecionada + Forma de Pagamento + filtro/subtotal no extrato');
+  console.log('  ✓ [Módulo 5] Relatórios: Comparativo Previsto x Realizado');
+  console.log('  ✓ [Módulo 6] Configurações: cadastro de Cartões (incluir/editar/excluir)');
+
+})();
+</script>
+
 
 <!-- ============================================================
   NEXUS ONE — SQL DE SEGURANÇA ATUALIZADO
