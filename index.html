@@ -1170,6 +1170,41 @@ tr:hover td { background: rgba(0,255,156,.025) !important; }
 
 /* ===== MELHORIAS v4.4 ===== */
 
+/* ── CORREÇÃO CRÍTICA: impede que o CSS global "input { width:100% !important }"
+   quebre os checkboxes dentro de células de tabela.
+   Sem isso, os checkboxes ficam invisíveis/deformados no GitHub Pages. ── */
+input[type="checkbox"] {
+  width: auto !important;
+  min-width: unset !important;
+  max-width: unset !important;
+  padding: 0 !important;
+  border: revert !important;
+  background: revert !important;
+  border-radius: revert !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  accent-color: var(--orange);
+  transform: scale(1.25);
+  vertical-align: middle;
+}
+input[type="checkbox"]:focus {
+  box-shadow: none !important;
+  border-color: revert !important;
+  outline: 2px solid var(--orange) !important;
+  outline-offset: 2px !important;
+}
+/* Célula da coluna de seleção */
+th.sel-col-th,
+td:has(input[type="checkbox"].sel-pagar-chk),
+td:has(input[type="checkbox"].sel-rec-check),
+td:has(input[type="checkbox"].sel-pagar-check) {
+  width: 36px !important;
+  min-width: 36px !important;
+  text-align: center !important;
+  padding: 0 6px !important;
+  vertical-align: middle !important;
+}
+
 /* Seleção múltipla / checkboxes */
 .sel-bar {
   position: sticky; bottom: 0; left: 0; right: 0;
@@ -3873,6 +3908,54 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
   background: rgba(255,140,0,0.05) !important;
   border-top: 2px solid rgba(255,140,0,0.2) !important;
   color: #FF9A2E !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   CORREÇÃO DEFINITIVA — CHECKBOXES EM TABELAS (GitHub Pages fix)
+   Este bloco DEVE ser o último do <style> para garantir especificidade
+   máxima e sobrescrever qualquer "input { width:100% !important }"
+   declarado anteriormente (há dois desses blocos neste arquivo).
+   Sem esse override, os checkboxes ficam com width:100%, tomam
+   toda a célula e ficam invisíveis/inutilizáveis no GitHub Pages.
+   ══════════════════════════════════════════════════════════════════ */
+input[type="checkbox"],
+input[type="checkbox"].sel-pagar-chk,
+input[type="checkbox"].sel-pagar-check,
+input[type="checkbox"].sel-rec-check,
+input[type="checkbox"]#pagarSelAllChk,
+input[type="checkbox"]#sel-todos-pagar,
+input[type="checkbox"]#pagarSelAllChk {
+  width: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  height: 16px !important;
+  padding: 0 !important;
+  margin: 0 auto !important;
+  border: 1px solid var(--border2) !important;
+  background: var(--surface2) !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  display: inline-block !important;
+  vertical-align: middle !important;
+  accent-color: var(--orange) !important;
+  box-shadow: none !important;
+  transform: scale(1.15) !important;
+  flex-shrink: 0 !important;
+}
+input[type="checkbox"]:focus {
+  outline: 2px solid var(--orange) !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+/* Célula que contém o checkbox na tabela de A Pagar / A Receber */
+table th:first-child:has(input[type="checkbox"]),
+table td:first-child:has(input[type="checkbox"]) {
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  text-align: center !important;
+  padding: 6px 8px !important;
+  vertical-align: middle !important;
 }
 </style>
 
