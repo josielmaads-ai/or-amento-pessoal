@@ -4059,6 +4059,7 @@ th { border-bottom: 1px solid rgba(255,140,0,0.12) !important; }
       </div>
     </div>
     <div class="grid g3" id="pagarTotais"></div>
+    <div class="grid g2" id="pagarDashboards" style="margin-bottom:16px;"></div>
     <div class="filter-bar" id="pagarFiltros"></div>
     <div class="table-wrap" id="pagarTabela"></div>
   </div>
@@ -7517,24 +7518,31 @@ function renderRelatorios(){
   const recMes=DATA.movimentacoes.filter(x=>x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.data?.startsWith(ma)&&x.tipo!=='Transferência').reduce((s,x)=>s+x.valor,0);
   const despMes=DATA.movimentacoes.filter(x=>x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.data?.startsWith(ma)&&x.tipo!=='Transferência').reduce((s,x)=>s+x.valor,0);
   const taxaPoupanca=recMes>0?(((recMes-despMes)/recMes)*100):0;
-  // Saldo médio últimos 6 meses
+  // Saldo médio mensal — considera apenas os meses que possuem movimentação
+  // registrada (entradas e/ou saídas), calculando a diferença (entradas −
+  // saídas) de cada um desses meses e tirando a média entre eles. Meses sem
+  // nenhuma movimentação não entram no cálculo nem contam como "zero".
   let saldoAcum=0; let mCount=0;
   for(let i=5;i>=0;i--){
     const d2=new Date(a,m-1-i,1);
     const mi2=d2.getMonth()+1; const ai2=d2.getFullYear();
     const mStr2=ai2+'-'+pad(mi2);
-    const e=DATA.movimentacoes.filter(x=>x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.data?.startsWith(mStr2)&&x.tipo!=='Transferência').reduce((s,x)=>s+x.valor,0);
-    const s=DATA.movimentacoes.filter(x=>x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.data?.startsWith(mStr2)&&x.tipo!=='Transferência').reduce((s,x)=>s+x.valor,0);
+    const movsMes=DATA.movimentacoes.filter(x=>x.status!=='ANULADO'&&x.data?.startsWith(mStr2)&&x.tipo!=='Transferência');
+    if(!movsMes.length) continue; // mês sem movimentação — não entra na média
+    const e=movsMes.filter(x=>x.tipoOp==='RECEITA').reduce((s,x)=>s+x.valor,0);
+    const s=movsMes.filter(x=>x.tipoOp==='DESPESA').reduce((s,x)=>s+x.valor,0);
     saldoAcum+=(e-s); mCount++;
   }
   const saldoMedio=mCount>0?saldoAcum/mCount:0;
-  // Projeção 12 meses realista
+  // Projeções realistas — Patrimônio Atual + (Média da Diferença Mensal × N meses)
+  const proj6=totSaldo+(saldoMedio*6);
   const projReal=totSaldo+(saldoMedio*12);
 
   document.getElementById('relKpiAdv').innerHTML=`
     <div class="kpi-adv-card"><div class="kpi-adv-label">💰 Patrimônio Atual</div><div class="kpi-adv-value ${totSaldo>=0?'c-emerald':'c-coral'}">${fmtR(totSaldo)}</div></div>
     <div class="kpi-adv-card"><div class="kpi-adv-label">📊 Taxa de Poupança</div><div class="kpi-adv-value ${taxaPoupanca>=0?'c-emerald':'c-coral'}">${taxaPoupanca.toFixed(1)}%</div></div>
-    <div class="kpi-adv-card"><div class="kpi-adv-label">⚖️ Saldo Médio (6m)</div><div class="kpi-adv-value ${saldoMedio>=0?'c-emerald':'c-coral'}">${fmtR(saldoMedio)}</div></div>
+    <div class="kpi-adv-card"><div class="kpi-adv-label">⚖️ Saldo Médio (${mCount} m)</div><div class="kpi-adv-value ${saldoMedio>=0?'c-emerald':'c-coral'}">${fmtR(saldoMedio)}</div></div>
+    <div class="kpi-adv-card"><div class="kpi-adv-label">🔮 Projeção 6m</div><div class="kpi-adv-value ${proj6>=0?'c-emerald':'c-coral'}">${fmtR(proj6)}</div></div>
     <div class="kpi-adv-card"><div class="kpi-adv-label">🔮 Projeção 12m</div><div class="kpi-adv-value ${projReal>=0?'c-emerald':'c-coral'}">${fmtR(projReal)}</div></div>`;
 
   // Fixas vs Variáveis (6 — Dashboard)
@@ -13042,6 +13050,285 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   console.log('  ✓ [Módulo 5] Relatórios: Comparativo Previsto x Realizado');
   console.log('  ✓ [Módulo 6] Configurações: cadastro de Cartões (incluir/editar/excluir)');
 
+})();
+</script>
+
+<!-- ============================================================
+  NEXUS ONE — EVOLUÇÃO v15.0 (aditiva, não-destrutiva)
+  1) Baixa múltipla de despesas em A Pagar (mesma conta de pagamento)
+  2) Dashboards de A Pagar: Mês Atual e Próximo Mês
+  3) Indicadores extras no Dashboard: Saldo Disponível Real e
+     Comprometimento da Renda
+  4) Padronização de todos os campos de data para DD/MM/AAAA
+  ============================================================ -->
+<script>
+(function nexusEvolucaoV15(){
+
+  // ================================================================
+  // [1] A PAGAR — DASHBOARDS: MÊS ATUAL e PRÓXIMO MÊS
+  // ================================================================
+  function _blocoPagarDash(titulo, lista, badgeCls, badgeTxt){
+    var totalGeral = lista.reduce(function(s,p){return s+p.valor;},0);
+    var pend = lista.filter(function(p){return p.status!=='PAGO';});
+    var totalPend = pend.reduce(function(s,p){return s+p.valor;},0);
+    var h = '<div class="card">'+
+      '<span class="card-badge '+badgeCls+'">'+badgeTxt+'</span>'+
+      '<div class="card-label">'+titulo+'</div>'+
+      '<div class="card-val c-coral">'+fmtR(totalPend)+'</div>'+
+      '<div class="card-sub">'+pend.length+' pendente(s) de '+lista.length+' lançamento(s) · Total do mês (com pagas): '+fmtR(totalGeral)+'</div>'+
+      '</div>';
+    return h;
+  }
+
+  function _renderDashboardsPagar(){
+    var el = document.getElementById('pagarDashboards');
+    if(!el) return;
+    var agora=new Date(); var m=agora.getMonth()+1, a=agora.getFullYear();
+    var ma = a+'-'+pad(m);
+    var pm = m===12?1:m+1, pa = m===12?a+1:a;
+    var pms = pa+'-'+pad(pm);
+    var listaMesAtual = DATA.pagar.filter(function(p){return p.vencimento && p.vencimento.indexOf(ma)===0;});
+    var listaProxMes  = DATA.pagar.filter(function(p){return p.vencimento && p.vencimento.indexOf(pms)===0;});
+    el.innerHTML =
+      _blocoPagarDash('📅 Contas do Mês Atual ('+nomeMes(m)+'/'+a+')', listaMesAtual, 'bg-amber', 'MÊS ATUAL') +
+      _blocoPagarDash('⏭ Contas do Próximo Mês ('+nomeMes(pm)+'/'+pa+')', listaProxMes, 'bg-sky', 'PRÓXIMO MÊS');
+  }
+
+  // ================================================================
+  // [2] A PAGAR — BAIXA MÚLTIPLA (seleciona várias contas e baixa
+  //     todas de uma vez, vinculadas à mesma conta de pagamento)
+  // ================================================================
+  function _updateBarraSelecaoPagar(){
+    var checks = document.querySelectorAll('.sel-pagar-chk:checked');
+    var tabelaWrap = document.getElementById('pagarTabela');
+    if(!tabelaWrap) return;
+    var bar = document.getElementById('pagarBulkBar');
+    if(!bar){
+      bar = document.createElement('div');
+      bar.id = 'pagarBulkBar';
+      bar.style.cssText = 'display:none;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;background:var(--surface2);border-radius:10px;margin-bottom:8px;font-size:12px;';
+      tabelaWrap.parentNode.insertBefore(bar, tabelaWrap);
+    }
+    if(!checks.length){ bar.style.display='none'; return; }
+    var total = 0;
+    checks.forEach(function(c){
+      var p = DATA.pagar.find(function(x){return x.id===c.value;});
+      if(p) total += p.valor;
+    });
+    bar.style.display = 'flex';
+    bar.innerHTML =
+      '<span>✅ <strong>'+checks.length+'</strong> selecionada(s) · Total: <strong class="mono c-coral">'+fmtR(total)+'</strong></span>'+
+      '<button class="btn btn-sm btn-emerald" onclick="_abrirBaixaLotePagar()">✓ Dar Baixa em Lote</button>'+
+      '<button class="btn btn-sm" onclick="_limparSelecaoPagar()">✕ Limpar Seleção</button>';
+  }
+
+  window._toggleSelAllPagar = function(cb){
+    document.querySelectorAll('.sel-pagar-chk').forEach(function(c){ c.checked = cb.checked; });
+    _updateBarraSelecaoPagar();
+  };
+  window._limparSelecaoPagar = function(){
+    document.querySelectorAll('.sel-pagar-chk').forEach(function(c){ c.checked = false; });
+    var selAll = document.getElementById('pagarSelAllChk'); if(selAll) selAll.checked = false;
+    _updateBarraSelecaoPagar();
+  };
+  window._updateBarraSelecaoPagar = _updateBarraSelecaoPagar;
+
+  window._abrirBaixaLotePagar = function(){
+    var ids = Array.prototype.map.call(document.querySelectorAll('.sel-pagar-chk:checked'), function(c){return c.value;});
+    if(!ids.length) return toast('⚠️ Selecione ao menos uma conta a pagar','var(--amber)');
+    if(!DATA.contas.length) return toast('⚠️ Crie uma conta antes','var(--amber)');
+    var itens = DATA.pagar.filter(function(p){ return ids.indexOf(p.id)>=0 && p.status!=='PAGO'; });
+    if(!itens.length) return toast('⚠️ As contas selecionadas já estão pagas','var(--amber)');
+    var total = itens.reduce(function(s,p){return s+p.valor;},0);
+    var listaHtml = itens.map(function(p){
+      return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11.5px;">'+
+        '<span>'+fmtD(p.vencimento)+' — '+esc(p.descricao||'—')+'</span>'+
+        '<strong class="mono c-coral">'+fmtR(p.valor)+'</strong></div>';
+    }).join('');
+    var h = '<div class="info-block success">✅ Baixa em lote de <strong>'+itens.length+'</strong> conta(s) — Total: <strong>'+fmtR(total)+'</strong></div>'+
+      '<div style="max-height:180px;overflow-y:auto;margin:10px 0;">'+listaHtml+'</div>'+
+      '<div class="mrow">'+
+      '<div><label>Conta de Débito (todas as selecionadas)</label><select id="bxLoteConta">'+
+        DATA.contas.map(function(c){return '<option value="'+c.id+'">'+esc(c.emoji||'')+' '+esc(c.nome)+'</option>';}).join('')+
+      '</select></div>'+
+      '<div><label>Data do Pagamento</label><input id="bxLoteDt" type="date" value="'+hoje()+'"></div>'+
+      '</div>';
+    openModal('Dar Baixa em Lote','✅', h, function(){
+      var contaId = document.getElementById('bxLoteConta').value;
+      var dt = document.getElementById('bxLoteDt').value;
+      if(!dt) return toast('⚠️ Informe a data do pagamento','var(--amber)');
+      itens.forEach(function(p){
+        p.status = 'PAGO';
+        p.dataPagamento = dt;
+        p.valorPago = p.valor;
+        DATA.movimentacoes.push({
+          id: genId('MOV'), contaId: contaId, tipoOp:'DESPESA', data: dt,
+          descricao: 'Pgto: '+(p.descricao||''), tipo: p.tipo||'Pagamento', subtipo: p.subtipo||'',
+          valor: p.valor, status:'ATIVO', criadoEm: new Date().toISOString()
+        });
+      });
+      save(true); renderPagar(); checkAlerts();
+      toast('✅ '+itens.length+' conta(s) baixada(s) com sucesso');
+      closeAllModals();
+    }, 'Confirmar Baixa em Lote');
+  };
+
+  function _injectBulkBaixaPagar(){
+    var wrap = document.getElementById('pagarTabela');
+    if(!wrap) return;
+    var table = wrap.querySelector('table');
+    if(!table || !table.rows.length) return;
+    var headRow = table.rows[0];
+    if(headRow.querySelector('.sel-col-th')) return;
+    var th = document.createElement('th');
+    th.className = 'sel-col-th';
+    th.style.width = '30px';
+    th.innerHTML = '<input type="checkbox" id="pagarSelAllChk" onclick="_toggleSelAllPagar(this)" title="Selecionar todos">';
+    headRow.insertBefore(th, headRow.firstChild);
+    for(var i=1;i<table.rows.length;i++){
+      var row = table.rows[i];
+      if(row.cells.length<3) { row.insertBefore(document.createElement('td'), row.firstChild); continue; }
+      var btn = row.querySelector('button[onclick^="darBaixaPagar"]');
+      var td = document.createElement('td');
+      if(btn){
+        var m = btn.getAttribute('onclick').match(/darBaixaPagar\('([^']+)'\)/);
+        var id = m ? m[1] : '';
+        if(id) td.innerHTML = '<input type="checkbox" class="sel-pagar-chk" value="'+id+'" onclick="_updateBarraSelecaoPagar()">';
+      }
+      row.insertBefore(td, row.firstChild);
+    }
+    _updateBarraSelecaoPagar();
+  }
+
+  // Encadeia com o renderizador de tabela realmente ativo (filtrarPagarNexus)
+  // e com o filtro rápido/paginação, garantindo que a seleção seja reaplicada
+  // a cada atualização da lista.
+  ['filtrarPagarNexus'].forEach(function(fnName){
+    var orig = window[fnName];
+    if(typeof orig !== 'function') return;
+    window[fnName] = function(){
+      orig.apply(this, arguments);
+      setTimeout(_injectBulkBaixaPagar, 0);
+    };
+  });
+
+  // Encadeia com renderPagar (o painel ativo) para os dois novos dashboards
+  var _origRenderPagarV15 = window.renderPagar;
+  if(typeof _origRenderPagarV15 === 'function'){
+    window.renderPagar = renderPagar = function(){
+      _origRenderPagarV15.apply(this, arguments);
+      _renderDashboardsPagar();
+      setTimeout(_injectBulkBaixaPagar, 0);
+    };
+  }
+
+  // ================================================================
+  // [3] DASHBOARD — Saldo Disponível Real + Comprometimento da Renda
+  //     (indicadores adicionais, não substituem os já existentes)
+  // ================================================================
+  function _renderIndicadoresExtrasDash(){
+    var flowEl = document.getElementById('dashFlow');
+    if(!flowEl) return;
+    var agora=new Date(); var m=agora.getMonth()+1, a=agora.getFullYear(); var ma=a+'-'+pad(m);
+    var saldoTot = DATA.contas.reduce(function(s,c){return s+saldoConta(c.id);},0);
+    var pagarM = DATA.pagar.filter(function(p){return p.vencimento&&p.vencimento.indexOf(ma)===0&&p.status!=='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+    var saldoDisponivelReal = saldoTot - pagarM;
+    var rendaMensal = (DATA.config && DATA.config.rendaMensal) || 0;
+    var comprometimento = rendaMensal>0 ? (pagarM/rendaMensal*100) : null;
+
+    var el = document.getElementById('dashIndicadoresExtras');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'dashIndicadoresExtras';
+      el.className = 'grid g2';
+      el.style.marginTop = '8px';
+      flowEl.parentNode.insertBefore(el, flowEl.nextSibling);
+    }
+    var corSaldo = saldoDisponivelReal>=0 ? 'c-emerald' : 'c-coral';
+    var corComp = comprometimento===null ? 'c-sky' : (comprometimento>=100?'c-coral':(comprometimento>=70?'c-amber':'c-emerald'));
+    el.innerHTML =
+      '<div class="card"><span class="card-badge '+(saldoDisponivelReal>=0?'bg-emerald':'bg-coral')+'">SALDO REAL</span>'+
+      '<div class="card-label">💡 Saldo Disponível Real</div>'+
+      '<div class="card-val '+corSaldo+'">'+fmtR(saldoDisponivelReal)+'</div>'+
+      '<div class="card-sub">Saldo atual − contas a pagar pendentes do mês</div></div>'+
+      '<div class="card"><span class="card-badge bg-sky">RENDA</span>'+
+      '<div class="card-label">📊 Comprometimento da Renda</div>'+
+      '<div class="card-val '+corComp+'">'+(comprometimento===null?'—':comprometimento.toFixed(0)+'%')+'</div>'+
+      '<div class="card-sub">'+(comprometimento===null?'Cadastre a renda mensal em Configurações':fmtR(pagarM)+' de '+fmtR(rendaMensal))+'</div></div>';
+  }
+
+  var _origRenderDashV15 = window.renderDashboard || renderDashboard;
+  window.renderDashboard = renderDashboard = function(){
+    _origRenderDashV15.apply(this, arguments);
+    setTimeout(_renderIndicadoresExtrasDash, 80);
+  };
+
+  // ================================================================
+  // [4] PADRONIZAÇÃO DE DATAS — DD/MM/AAAA em todos os campos
+  //     (mantém o valor interno em ISO — YYYY-MM-DD — para não
+  //     quebrar nenhuma lógica de filtro/ordenação já existente)
+  // ================================================================
+  var _nativeValueDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+
+  function _toBR(iso){
+    if(!iso) return '';
+    var p = String(iso).split('-');
+    return p.length === 3 ? (p[2]+'/'+p[1]+'/'+p[0]) : '';
+  }
+  function _toISO(br){
+    var m = String(br||'').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? (m[3]+'-'+m[2]+'-'+m[1]) : '';
+  }
+
+  function _brDateize(el){
+    if(!el || el.dataset.brDate) return;
+    el.dataset.brDate = '1';
+    var iso = _nativeValueDesc.get.call(el) || '';
+    el.setAttribute('type','text');
+    el.setAttribute('inputmode','numeric');
+    el.setAttribute('placeholder','DD/MM/AAAA');
+    el.setAttribute('maxlength','10');
+    el.setAttribute('autocomplete','off');
+    el.classList.add('date-br-input');
+    _nativeValueDesc.set.call(el, _toBR(iso));
+    Object.defineProperty(el, 'value', {
+      configurable: true,
+      get: function(){ return _toISO(_nativeValueDesc.get.call(el)); },
+      set: function(v){ _nativeValueDesc.set.call(el, _toBR(v)); }
+    });
+    el.addEventListener('input', function(){
+      var raw = _nativeValueDesc.get.call(el).replace(/\D/g,'').slice(0,8);
+      var out = raw;
+      if(raw.length > 4) out = raw.slice(0,2)+'/'+raw.slice(2,4)+'/'+raw.slice(4);
+      else if(raw.length > 2) out = raw.slice(0,2)+'/'+raw.slice(2);
+      _nativeValueDesc.set.call(el, out);
+      try{ el.setSelectionRange(out.length, out.length); }catch(e){}
+    });
+  }
+
+  function _scanDates(root){
+    if(!root || !root.querySelectorAll) return;
+    root.querySelectorAll('input[type="date"]').forEach(_brDateize);
+  }
+
+  _scanDates(document);
+  var _dateObserver = new MutationObserver(function(muts){
+    muts.forEach(function(mu){
+      if(!mu.addedNodes) return;
+      mu.addedNodes.forEach(function(n){
+        if(n.nodeType !== 1) return;
+        if(n.matches && n.matches('input[type="date"]')) _brDateize(n);
+        _scanDates(n);
+      });
+    });
+  });
+  _dateObserver.observe(document.body, {childList:true, subtree:true});
+
+  console.log('⬡ Nexus One v15.0 — Evolução aditiva aplicada:');
+  console.log('  ✓ Baixa múltipla de contas a pagar (mesma conta de pagamento)');
+  console.log('  ✓ Dashboards de A Pagar: Mês Atual e Próximo Mês');
+  console.log('  ✓ Indicadores adicionais no Dashboard: Saldo Disponível Real e Comprometimento da Renda');
+  console.log('  ✓ Padronização de todos os campos de data para DD/MM/AAAA');
 })();
 </script>
 
