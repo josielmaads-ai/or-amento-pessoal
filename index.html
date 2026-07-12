@@ -12634,8 +12634,15 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       '<span>'+totalReg+' lançamento(s) no filtro</span>'+
       '<span>Subtotal do filtro: <strong class="mono c-amber">'+fmtR(subtotal)+'</strong> · Pendente: <strong class="mono c-coral">'+fmtR(subtotalPend)+'</strong></span>'+
     '</div>';
-    h+='<table><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>F. Pagamento</th><th>Cartão</th><th style="text-align:right;">Valor</th><th>Status</th><th>Ações</th></tr>';
-    if(!listPag.length) h+='<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3);">Nenhum lançamento encontrado</td></tr>';
+    // ── CORREÇÃO GITHUB PAGES: checkboxes incluídos diretamente no HTML ──
+    // A abordagem anterior usava setTimeout + injeção DOM (_injectBulkBaixaPagar),
+    // que falha no GitHub Pages por race condition de timing. Agora os checkboxes
+    // são gerados junto com o HTML da tabela, garantindo funcionamento idêntico
+    // em ambiente local e hospedado.
+    h+='<table><tr>'+
+      '<th style="width:30px;"><input type="checkbox" id="pagarSelAllChk" onclick="_toggleSelAllPagar(this)" title="Selecionar todos"></th>'+
+      '<th>ID</th><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>F. Pagamento</th><th>Cartão</th><th style="text-align:right;">Valor</th><th>Status</th><th>Ações</th></tr>';
+    if(!listPag.length) h+='<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3);">Nenhum lançamento encontrado</td></tr>';
     listPag.forEach(function(p){
       var stBadge,cls='';
       if(p.status==='PAGO'){stBadge='<span class="badge bg-emerald">PAGO</span>';cls='row-paid';}
@@ -12643,6 +12650,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       else if(p.vencimento===hojeStr){stBadge='<span class="badge bg-amber">HOJE</span>';cls='row-today';}
       else stBadge='<span class="badge bg-gray">PENDENTE</span>';
       h+='<tr class="'+cls+'">'+
+        '<td><input type="checkbox" class="sel-pagar-chk" value="'+p.id+'" onclick="_updateBarraSelecaoPagar()"></td>'+
         '<td style="font-size:9px;color:var(--text3);font-family:monospace;">'+((p.id||'').substr(-8)||'—')+'</td>'+
         '<td style="white-space:nowrap;">'+fmtD(p.vencimento)+'</td>'+
         '<td style="font-weight:500;">'+esc(p.descricao||'—')+'</td>'+
@@ -12660,6 +12668,8 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     h+='</table>';
     if(typeof renderPaginacao==='function') h += renderPaginacao(totalReg, window._pagPagarNexus, 'setPagPagar', 'pagarTabela');
     document.getElementById('pagarTabela').innerHTML=h;
+    // Atualiza barra de seleção após renderizar (sem setTimeout — DOM já está pronto)
+    if(typeof _updateBarraSelecaoPagar==='function') _updateBarraSelecaoPagar();
   };
 
   // ============================================================
@@ -13200,17 +13210,15 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     _updateBarraSelecaoPagar();
   }
 
-  // Encadeia com o renderizador de tabela realmente ativo (filtrarPagarNexus)
-  // e com o filtro rápido/paginação, garantindo que a seleção seja reaplicada
-  // a cada atualização da lista.
-  ['filtrarPagarNexus'].forEach(function(fnName){
-    var orig = window[fnName];
-    if(typeof orig !== 'function') return;
-    window[fnName] = function(){
-      orig.apply(this, arguments);
-      setTimeout(_injectBulkBaixaPagar, 0);
-    };
-  });
+  // CORREÇÃO GITHUB PAGES: _injectBulkBaixaPagar não é mais necessária para os
+  // checkboxes (agora gerados inline em filtrarPagarNexus), mas mantemos a função
+  // como no-op seguro para não quebrar chamadas remanescentes de versões anteriores.
+  // O encadeamento com filtrarPagarNexus foi removido — a barra de seleção é
+  // atualizada diretamente ao fim de filtrarPagarNexus acima.
+  _injectBulkBaixaPagar = function(){
+    // no-op: checkboxes agora são gerados diretamente no HTML da tabela
+    if(typeof _updateBarraSelecaoPagar==='function') _updateBarraSelecaoPagar();
+  };
 
   // Encadeia com renderPagar (o painel ativo) para os dois novos dashboards
   var _origRenderPagarV15 = window.renderPagar;
@@ -13218,7 +13226,8 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     window.renderPagar = renderPagar = function(){
       _origRenderPagarV15.apply(this, arguments);
       _renderDashboardsPagar();
-      setTimeout(_injectBulkBaixaPagar, 0);
+      // Atualiza barra de seleção após renderPagar (checkboxes já estão no HTML)
+      if(typeof _updateBarraSelecaoPagar==='function') _updateBarraSelecaoPagar();
     };
   }
 
