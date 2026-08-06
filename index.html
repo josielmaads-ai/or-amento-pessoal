@@ -402,6 +402,8 @@ tr:hover td{background:rgba(255,122,0,.025);}
 .btn-emerald:hover{background:rgba(0,229,160,.08);}
 .btn-edit{border-color:rgba(56,205,255,.3);color:var(--sky);}
 .btn-edit:hover{background:rgba(56,205,255,.08);}
+.btn-dup{border-color:rgba(155,109,255,.3);color:var(--violet);}
+.btn-dup:hover{background:rgba(155,109,255,.08);}
 .btn-sm{padding:6px 13px;font-size:11.5px;border-radius:8px;}
 .btn-xs{padding:4px 10px;font-size:10.5px;border-radius:7px;}
 
@@ -5509,7 +5511,7 @@ function renderContaDetail(id){
           <td class="mono ${cor}" style="text-align:right;font-weight:700;">${sinal}${fmtR(m.valor)}</td>
           <td>${badge}</td>
           <td style="white-space:nowrap;">
-            ${!isAnul?`<button class="btn btn-xs btn-edit" onclick="editarMovimentacao('${m.id}')">✏</button>
+            ${!isAnul?`<button class="btn btn-xs btn-edit" onclick="editarMovimentacao('${m.id}')">✏</button> <button class="btn btn-xs btn-dup" onclick="duplicarMovimentacao('${m.id}')" title="Duplicar Movimento">⧉</button>
             <button class="btn btn-xs btn-amber" onclick="anularMovimentacao('${m.id}')" title="Anular">⊘</button>`:''}
             <button class="btn btn-xs btn-danger" onclick="excluirMovimentacao('${m.id}')">🗑</button>
           </td>
@@ -5925,6 +5927,7 @@ function filtrarPagar(filtroExtra=''){
       <td style="white-space:nowrap;">
         ${p.status!=='PAGO'?`<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar('${p.id}')">✓ Baixa</button> `:''}
         <button class="btn btn-xs btn-edit" onclick="editarPagar('${p.id}')">✏</button>
+        <button class="btn btn-xs btn-dup" onclick="duplicarPagar('${p.id}')" title="Duplicar Movimento">⧉</button>
         <button class="btn btn-xs btn-danger" onclick="excluirPagar('${p.id}')">🗑</button>
       </td>
     </tr>`;
@@ -6154,6 +6157,7 @@ function filtrarReceber(){
       <td style="white-space:nowrap;">
         ${r.status!=='RECEBIDO'?`<button class="btn btn-xs btn-primary" onclick="darBaixaReceber('${r.id}')">✓ Baixa</button> `:''}
         <button class="btn btn-xs btn-edit" onclick="editarReceber('${r.id}')">✏</button>
+        <button class="btn btn-xs btn-dup" onclick="duplicarReceber('${r.id}')" title="Duplicar Movimento">⧉</button>
         <button class="btn btn-xs btn-danger" onclick="excluirReceber('${r.id}')">🗑</button>
       </td>
     </tr>`;
@@ -6293,6 +6297,40 @@ function excluirReceber(id){
   if(!confirm('Excluir?')) return;
   DATA.receber=DATA.receber.filter(x=>x.id!==id);
   save(true); renderReceber(); toast('🗑 Excluído');
+}
+
+// ================================================================
+// DUPLICAR MOVIMENTO — copia os dados de um lançamento existente,
+// gera um novo ID e abre o formulário de edição já preenchido para
+// que o usuário confirme/ajuste antes de salvar como novo registro.
+// O registro original permanece inalterado.
+// ================================================================
+function duplicarMovimentacao(id){
+  const orig=DATA.movimentacoes.find(x=>x.id===id); if(!orig) return;
+  const novo=Object.assign({},orig,{id:genId('MOV'),criadoEm:new Date().toISOString()});
+  DATA.movimentacoes.push(novo);
+  save(true);
+  if(typeof contaSel!=='undefined' && contaSel) renderContaDetail(contaSel);
+  toast('✅ Movimentação duplicada');
+  editarMovimentacao(novo.id);
+}
+
+function duplicarPagar(id){
+  const orig=DATA.pagar.find(x=>x.id===id); if(!orig) return;
+  const novo=Object.assign({},orig,{id:genId('PG'),criadoEm:new Date().toISOString()});
+  DATA.pagar.push(novo);
+  save(true); renderPagar();
+  toast('✅ Lançamento duplicado');
+  editarPagar(novo.id);
+}
+
+function duplicarReceber(id){
+  const orig=DATA.receber.find(x=>x.id===id); if(!orig) return;
+  const novo=Object.assign({},orig,{id:genId('RC'),criadoEm:new Date().toISOString()});
+  DATA.receber.push(novo);
+  save(true); renderReceber();
+  toast('✅ Lançamento duplicado');
+  editarReceber(novo.id);
 }
 
 // ================================================================
@@ -8641,6 +8679,7 @@ window.filtrarPagarV44 = function(){
       '<td style="white-space:nowrap;">'+
       (p.status!=='PAGO'?'<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar(\''+p.id+'\')\"">✓ Baixa</button> ':'')+
       '<button class="btn btn-xs btn-edit" onclick="editarPagar(\''+p.id+'\')\"">✏</button>'+
+      '<button class="btn btn-xs btn-dup" onclick="duplicarPagar(\''+p.id+'\')" title="Duplicar Movimento">⧉</button>'+
       '<button class="btn btn-xs btn-danger" onclick="excluirPagar(\''+p.id+'\')\"">🗑</button>'+
       '</td></tr>';
   });
@@ -8760,6 +8799,7 @@ window.filtrarReceberV44 = function(){
       '<td style="white-space:nowrap;">'+
       (r.status!=='RECEBIDO'?'<button class="btn btn-xs btn-primary" onclick="darBaixaReceber(\''+r.id+'\')\"">✓ Baixa</button> ':'')+
       '<button class="btn btn-xs btn-edit" onclick="editarReceber(\''+r.id+'\')\"">✏</button>'+
+      '<button class="btn btn-xs btn-dup" onclick="duplicarReceber(\''+r.id+'\')" title="Duplicar Movimento">⧉</button>'+
       '<button class="btn btn-xs btn-danger" onclick="excluirReceber(\''+r.id+'\')\"">🗑</button>'+
       '</td></tr>';
   });
@@ -9387,6 +9427,7 @@ window.filtrarPagarV44 = function(){
       '<td style="white-space:nowrap;">'+
       (p.status!=='PAGO'?'<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar(\''+p.id+'\')">✓ Baixa</button> ':'')+
       '<button class="btn btn-xs btn-edit" onclick="editarPagar(\''+p.id+'\')">✏</button>'+
+      '<button class="btn btn-xs btn-dup" onclick="duplicarPagar(\''+p.id+'\')" title="Duplicar Movimento">⧉</button>'+
       '<button class="btn btn-xs btn-danger" onclick="excluirPagar(\''+p.id+'\')">🗑</button>'+
       '</td></tr>';
   });
@@ -9448,6 +9489,7 @@ window.filtrarReceberV44 = function(){
       '<td style="white-space:nowrap;">'+
       (r.status!=='RECEBIDO'?'<button class="btn btn-xs btn-primary" onclick="darBaixaReceber(\''+r.id+'\')">✓ Baixa</button> ':'')+
       '<button class="btn btn-xs btn-edit" onclick="editarReceber(\''+r.id+'\')">✏</button>'+
+      '<button class="btn btn-xs btn-dup" onclick="duplicarReceber(\''+r.id+'\')" title="Duplicar Movimento">⧉</button>'+
       '<button class="btn btn-xs btn-danger" onclick="excluirReceber(\''+r.id+'\')">🗑</button>'+
       '</td></tr>';
   });
@@ -10475,6 +10517,7 @@ console.log('  ✓ [v7-9] Padronização visual de tabelas (sombras, totais, cor
               ? '<button class="btn btn-xs btn-edit" onclick="editarMovimentacao(\''+m.id+'\')">✏</button> ' +
                 '<button class="btn btn-xs btn-amber" onclick="anularMovimentacao(\''+m.id+'\')" title="Anular">⊘</button>'
               : '') +
+            ' <button class="btn btn-xs btn-dup" onclick="duplicarMovimentacao(\''+m.id+'\')" title="Duplicar Movimento">⧉</button>' +
             ' <button class="btn btn-xs btn-danger" onclick="excluirMovimentacao(\''+m.id+'\')">🗑</button>' +
           '</td>' +
           '</tr>';
@@ -11646,6 +11689,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
           '<td style="white-space:nowrap;">'+
           (p.status!=='PAGO'?'<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar(\''+p.id+'\')">✓ Baixa</button> ':'')+
           '<button class="btn btn-xs btn-edit" onclick="editarPagar(\''+p.id+'\')">✏</button>'+
+          '<button class="btn btn-xs btn-dup" onclick="duplicarPagar(\''+p.id+'\')" title="Duplicar Movimento">⧉</button>'+
           '<button class="btn btn-xs btn-danger" onclick="excluirPagar(\''+p.id+'\')">🗑</button>'+
           '</td></tr>';
       });
@@ -11731,6 +11775,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
           '<td style="white-space:nowrap;">'+
           (r.status!=='RECEBIDO'?'<button class="btn btn-xs btn-primary" onclick="darBaixaReceber(\''+r.id+'\')">✓ Baixa</button> ':'')+
           '<button class="btn btn-xs btn-edit" onclick="editarReceber(\''+r.id+'\')">✏</button>'+
+          '<button class="btn btn-xs btn-dup" onclick="duplicarReceber(\''+r.id+'\')" title="Duplicar Movimento">⧉</button>'+
           '<button class="btn btn-xs btn-danger" onclick="excluirReceber(\''+r.id+'\')">🗑</button>'+
           '</td></tr>';
       });
@@ -11854,6 +11899,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
             '<td>'+badge+'</td>'+
             '<td style="white-space:nowrap;">'+
             (!isAnul?'<button class="btn btn-xs btn-edit" onclick="editarMovimentacao(\''+m.id+'\')">✏</button> <button class="btn btn-xs btn-amber" onclick="anularMovimentacao(\''+m.id+'\')" title="Anular">⊘</button>':'')+
+            '<button class="btn btn-xs btn-dup" onclick="duplicarMovimentacao(\''+m.id+'\')" title="Duplicar Movimento">⧉</button>'+
             '<button class="btn btn-xs btn-danger" onclick="excluirMovimentacao(\''+m.id+'\')">🗑</button>'+
             '</td></tr>';
         }).join('');
@@ -12745,6 +12791,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
         '<td style="white-space:nowrap;">'+
           (p.status!=='PAGO'?'<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar(\''+p.id+'\')">✓ Baixa</button> ':'')+
           '<button class="btn btn-xs btn-edit" onclick="editarPagar(\''+p.id+'\')">✏</button>'+
+          '<button class="btn btn-xs btn-dup" onclick="duplicarPagar(\''+p.id+'\')" title="Duplicar Movimento">⧉</button>'+
           '<button class="btn btn-xs btn-danger" onclick="excluirPagar(\''+p.id+'\')">🗑</button>'+
         '</td></tr>';
     });
@@ -12878,6 +12925,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
           '<td>'+badge+'</td>'+
           '<td style="white-space:nowrap;">'+
             (!isAnul?'<button class="btn btn-xs btn-edit" onclick="editarMovimentacao(\''+m.id+'\')">✏</button> <button class="btn btn-xs btn-amber" onclick="anularMovimentacao(\''+m.id+'\')" title="Anular">⊘</button>':'')+
+            ' <button class="btn btn-xs btn-dup" onclick="duplicarMovimentacao(\''+m.id+'\')" title="Duplicar Movimento">⧉</button>'+
             ' <button class="btn btn-xs btn-danger" onclick="excluirMovimentacao(\''+m.id+'\')">🗑</button>'+
           '</td></tr>';
       });
