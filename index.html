@@ -13145,9 +13145,13 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       return p?(p.valorPrevisto||0):0;
     }
     function realizado(tipoNome){
+      // REALIZADO = somente o que foi efetivamente registrado em CONTAS.
+      // Uma despesa do A Pagar que ainda não foi baixada NÃO é realizado.
+      // Quando é baixada (darBaixaPagar), o sistema já cria a movimentação
+      // correspondente em DATA.movimentacoes — por isso não somamos o A Pagar
+      // aqui separadamente (evita contar a mesma despesa duas vezes).
       var movs=(DATA.movimentacoes||[]).filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo===tipoNome&&x.data&&x.data.startsWith(ma);}).reduce(function(s,x){return s+x.valor;},0);
-      var pagPendente=(DATA.pagar||[]).filter(function(p){return p.tipo===tipoNome&&p.status!=='PAGO'&&p.vencimento&&p.vencimento.startsWith(ma);}).reduce(function(s,p){return s+p.valor;},0);
-      return movs+pagPendente;
+      return movs;
     }
     var linhas=tiposDesp.map(function(t){
       var prev=previsto(t.nome), real=realizado(t.nome), diff=prev-real;
@@ -13524,5 +13528,515 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 ============================================================ -->
+
+<!-- ============================================================
+  NEXUS ONE — EVOLUÇÃO v16.0 (aditiva, não-destrutiva)
+  MÓDULO RELATÓRIO — Upgrade solicitado:
+   1) Card "Projeção até 31 de Dezembro"
+   2) Card "Projeção 3 Meses"
+   3) Novo relatório "Relatório de Saldos das Contas"
+   4) Botão individual "Gerar PDF" para cada relatório
+  MÓDULO PREVISÕES — nenhuma regra automática nova foi criada.
+  A única regra de negócio de PREVISÃO permanece sendo o lançamento
+  manual do usuário no módulo Previsões (DATA.previsoes), inalterado.
+  ============================================================ -->
+<script>
+(function nexusRelatoriosUpgradeV16(){
+
+  // ------------------------------------------------------------
+  // Helpers de cálculo (reutilizam a MESMA lógica já usada pelo
+  // sistema para Projeção 6m/12m: Patrimônio Atual + Média da
+  // Diferença Mensal dos últimos 6 meses × N meses)
+  // ------------------------------------------------------------
+  function _saldoMedioMensal(){
+    var a=ano(), m=mes(), saldoAcum=0, mCount=0;
+    for(var i=5;i>=0;i--){
+      var d2=new Date(a,m-1-i,1);
+      var mi2=d2.getMonth()+1, ai2=d2.getFullYear();
+      var mStr2=ai2+'-'+pad(mi2);
+      var movsMes=DATA.movimentacoes.filter(function(x){return x.status!=='ANULADO'&&x.data&&x.data.indexOf(mStr2)===0&&x.tipo!=='Transferência';});
+      if(!movsMes.length) continue;
+      var e=movsMes.filter(function(x){return x.tipoOp==='RECEITA';}).reduce(function(s,x){return s+x.valor;},0);
+      var s=movsMes.filter(function(x){return x.tipoOp==='DESPESA';}).reduce(function(s,x){return s+x.valor;},0);
+      saldoAcum+=(e-s); mCount++;
+    }
+    return mCount>0?saldoAcum/mCount:0;
+  }
+  function _totalSaldoContas(){ return DATA.contas.reduce(function(s,c){return s+saldoConta(c.id);},0); }
+  function _mesesRestantesAteDezembro(){
+    var hojeD=new Date();
+    var fim=new Date(hojeD.getFullYear(),11,31);
+    var diffDias=Math.max(0,Math.ceil((fim-hojeD)/86400000));
+    return diffDias/30.4375; // meses fracionados restantes até 31/12
+  }
+
+  function _kpiCardHtml(label,val,corPositiva){
+    var cls=val>=0?'c-emerald':'c-coral';
+    return '<div class="kpi-adv-card"><div class="kpi-adv-label">'+label+'</div><div class="kpi-adv-value '+cls+'">'+fmtR(val)+'</div></div>';
+  }
+
+  // ------------------------------------------------------------
+  // Injeta os 2 novos cards no painel KPI (#relKpiAdv) sem remover
+  // os existentes (Patrimônio Atual, Taxa de Poupança, Saldo Médio,
+  // Projeção 6m, Projeção 12m).
+  // ------------------------------------------------------------
+  function _injetarNovosCardsKpi(){
+    var kpiEl=document.getElementById('relKpiAdv');
+    if(!kpiEl) return;
+    document.getElementById('kpiProjDez')?.remove();
+    document.getElementById('kpiProj3m')?.remove();
+    var totSaldo=_totalSaldoContas();
+    var saldoMedio=_saldoMedioMensal();
+    var projDez=totSaldo+(saldoMedio*_mesesRestantesAteDezembro());
+    var proj3=totSaldo+(saldoMedio*3);
+    var d1=document.createElement('div');
+    d1.id='kpiProjDez';
+    d1.innerHTML=_kpiCardHtml('📆 Projeção até 31 de Dezembro',projDez);
+    kpiEl.appendChild(d1.firstElementChild);
+    var d2=document.createElement('div');
+    d2.id='kpiProj3m';
+    d2.innerHTML=_kpiCardHtml('🔮 Projeção 3 Meses',proj3);
+    kpiEl.appendChild(d2.firstElementChild);
+  }
+
+  // ------------------------------------------------------------
+  // RELATÓRIO DE SALDOS DAS CONTAS (tela)
+  // ------------------------------------------------------------
+  window.relSaldosContas=function(){
+    var c=document.getElementById('relContent'); if(!c) return;
+    var linhas=DATA.contas.map(function(ct){ return {nome:ct.nome,tipo:ct.tipo||'—',emoji:ct.emoji||'🏦',saldo:saldoConta(ct.id)}; });
+    var total=linhas.reduce(function(s,l){return s+l.saldo;},0);
+    var h='<div class="adv-report-card"><div class="adv-report-title">💰 Relatório de Saldos das Contas</div>';
+    if(!linhas.length){
+      h+='<div style="color:var(--text3);padding:16px;">Nenhuma conta cadastrada</div>';
+    } else {
+      h+='<div class="table-wrap"><table><tr><th>Conta</th><th>Tipo</th><th style="text-align:right;">Saldo Atual</th></tr>';
+      linhas.forEach(function(l){
+        h+='<tr><td>'+l.emoji+' '+esc(l.nome)+'</td><td style="font-size:11px;color:var(--text3);">'+esc(l.tipo)+'</td>'+
+          '<td class="mono '+(l.saldo>=0?'c-emerald':'c-coral')+'" style="text-align:right;">'+fmtR(l.saldo)+'</td></tr>';
+      });
+      h+='<tr class="tr-totais"><td colspan="2">SALDO TOTAL CONSOLIDADO</td><td class="mono" style="text-align:right;">'+fmtR(total)+'</td></tr>';
+      h+='</table></div>';
+    }
+    h+='<div style="margin-top:16px;"><button class="btn btn-sm btn-primary" onclick="gerarPDFRelatorio(\'saldosContas\')">📄 Gerar PDF</button></div>';
+    h+='</div>';
+    c.innerHTML=h;
+    c.scrollIntoView({behavior:'smooth'});
+  };
+
+  // ------------------------------------------------------------
+  // Injeta o card "Relatório de Saldos das Contas" + seção de
+  // exportação em PDF individual por relatório, sem remover nada
+  // do grid existente.
+  // ------------------------------------------------------------
+  function _injetarCardSaldosEExportPDF(){
+    var rg=document.getElementById('relGrid');
+    if(rg && !document.getElementById('relCardSaldosContas')){
+      var d=document.createElement('div');
+      d.className='card'; d.id='relCardSaldosContas'; d.style.cursor='pointer';
+      d.onclick=function(){ relSaldosContas(); };
+      d.innerHTML='<div style="font-size:32px;margin-bottom:12px;">💰</div>'+
+        '<div style="font-size:14px;font-weight:700;margin-bottom:5px;">Saldos das Contas</div>'+
+        '<div style="font-size:11px;color:var(--text3);">Consolidado de todas as contas cadastradas</div>';
+      rg.appendChild(d);
+    }
+    var kpiEl=document.getElementById('relKpiAdv');
+    if(kpiEl && !document.getElementById('relExportPdfBox')){
+      var box=document.createElement('div');
+      box.id='relExportPdfBox';
+      box.className='card';
+      box.style.cssText='grid-column:1/-1;margin-top:4px;';
+      box.innerHTML='<div style="font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);font-weight:700;margin-bottom:12px;">📄 Exportar Relatórios em PDF</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;">'+
+        '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'geral\')">📄 Resumo Geral</button>'+
+        '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'despTipo\')">📄 Despesas por Tipo</button>'+
+        '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'previstoRealizado\')">📄 Previsão x Realizado</button>'+
+        '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'patrimonial\')">📄 Posição Patrimonial</button>'+
+        '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'saldosContas\')">📄 Saldos das Contas</button>'+
+        '</div>';
+      var parent=document.getElementById('module-relatorios');
+      if(parent) parent.insertBefore(box, kpiEl.nextSibling);
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Geração de PDF (via impressão do navegador — "Salvar como PDF")
+  // Não introduz bibliotecas externas. Reconstrói os dados a partir
+  // das mesmas fontes usadas na tela (DATA.*), garantindo fidelidade.
+  // ------------------------------------------------------------
+  var PDF_CORES={ receita:'#00B37A', despesa:'#D6304A', previsto:'#C98A00', realizado:'#0E86C9', saldo:'#334155', projecao:'#6D46D6' };
+
+  function _pdfCabecalho(titulo,periodo,cor){
+    var agora=new Date();
+    var dataGer=pad(agora.getDate())+'/'+pad(agora.getMonth()+1)+'/'+agora.getFullYear()+' '+pad(agora.getHours())+':'+pad(agora.getMinutes());
+    return ''+
+      '<div style="border-bottom:3px solid '+cor+';padding-bottom:14px;margin-bottom:22px;">'+
+        '<div style="font-size:11px;letter-spacing:2px;color:#64748B;font-weight:700;text-transform:uppercase;">NEXUS ONE — SISTEMA FINANCEIRO PESSOAL</div>'+
+        '<div style="font-size:22px;font-weight:800;color:#0F172A;margin-top:4px;">'+esc(titulo)+'</div>'+
+        '<div style="font-size:11px;color:#64748B;margin-top:6px;">'+(periodo?('Período de referência: '+esc(periodo)+' · '):'')+'Gerado em '+dataGer+'</div>'+
+      '</div>';
+  }
+  function _pdfRodape(){
+    return '<div style="margin-top:28px;padding-top:10px;border-top:1px solid #E2E8F0;font-size:10px;color:#94A3B8;">Documento gerado automaticamente pelo Nexus One — Relatório reflete os dados registrados no sistema no momento da geração.</div>';
+  }
+  function _pdfAbrirEImprimir(titulo,bodyHtml){
+    var w=window.open('','_blank');
+    if(!w){ toast('⚠️ Permita pop-ups para gerar o PDF','var(--amber)'); return; }
+    w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+esc(titulo)+'</title>'+
+      '<style>'+
+      'body{font-family:Arial,Helvetica,sans-serif;color:#0F172A;padding:36px;max-width:820px;margin:0 auto;}'+
+      'table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;}'+
+      'th{background:#F1F5F9;color:#334155;text-align:left;padding:8px 10px;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #E2E8F0;}'+
+      'td{padding:7px 10px;border-bottom:1px solid #EEF2F7;}'+
+      'tr.total td{font-weight:800;background:#F8FAFC;border-top:2px solid #CBD5E1;}'+
+      '.mono{font-variant-numeric:tabular-nums;}'+
+      '.pos{color:'+PDF_CORES.receita+';} .neg{color:'+PDF_CORES.despesa+';}'+
+      '@media print{ body{padding:14px;} }'+
+      '</style></head><body>'+bodyHtml+'</body></html>');
+    w.document.close();
+    setTimeout(function(){ w.focus(); w.print(); },300);
+  }
+
+  window.gerarPDFRelatorio=function(tipo){
+    var a=ano(), m=mes(), ma=a+'-'+pad(m);
+    if(tipo==='saldosContas'){
+      var linhas=DATA.contas.map(function(ct){ return {nome:ct.nome,tipo:ct.tipo||'—',saldo:saldoConta(ct.id)}; });
+      var total=linhas.reduce(function(s,l){return s+l.saldo;},0);
+      var h=_pdfCabecalho('Relatório de Saldos das Contas','',PDF_CORES.saldo)+
+        '<table><tr><th>Conta</th><th>Tipo</th><th style="text-align:right;">Saldo Atual</th></tr>'+
+        linhas.map(function(l){return '<tr><td>'+esc(l.nome)+'</td><td>'+esc(l.tipo)+'</td><td class="mono '+(l.saldo>=0?'pos':'neg')+'" style="text-align:right;">'+fmtR(l.saldo)+'</td></tr>';}).join('')+
+        '<tr class="total"><td colspan="2">SALDO TOTAL CONSOLIDADO</td><td style="text-align:right;">'+fmtR(total)+'</td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Relatório de Saldos das Contas',h);
+    } else if(tipo==='despTipo'){
+      var grupos={};
+      DATA.movimentacoes.filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.data&&x.data.indexOf(ma)===0&&x.tipo!=='Transferência';}).forEach(function(x){
+        var t=x.tipo||'Outros'; grupos[t]=(grupos[t]||0)+x.valor;
+      });
+      var totD=Object.values(grupos).reduce(function(s,v){return s+v;},0);
+      var linhasD=Object.entries(grupos).sort(function(a2,b2){return b2[1]-a2[1];});
+      var h2=_pdfCabecalho('Despesas por Tipo',nomeMesFull(m)+'/'+a,PDF_CORES.despesa)+
+        '<table><tr><th>Tipo</th><th style="text-align:right;">Total</th><th style="text-align:right;">%</th></tr>'+
+        linhasD.map(function(e){return '<tr><td>'+esc(e[0])+'</td><td class="mono neg" style="text-align:right;">'+fmtR(e[1])+'</td><td style="text-align:right;">'+(totD>0?(e[1]/totD*100).toFixed(1):'0.0')+'%</td></tr>';}).join('')+
+        '<tr class="total"><td>TOTAL DE DESPESAS</td><td style="text-align:right;">'+fmtR(totD)+'</td><td></td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Despesas por Tipo',h2);
+    } else if(tipo==='previstoRealizado'){
+      var tiposDesp=DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';});
+      var prevsDoMes=(DATA.previsoes||[]).filter(function(p){return p.mesAno===ma;});
+      var realizadoMap={};
+      DATA.movimentacoes.filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.data&&x.data.indexOf(ma)===0;}).forEach(function(x){
+        var t=x.tipo||'Outros'; realizadoMap[t]=(realizadoMap[t]||0)+x.valor;
+      });
+      var todos=Array.from(new Set(prevsDoMes.map(function(p){return p.tipo;}).concat(Object.keys(realizadoMap)))).sort();
+      var totPrev=0,totReal=0;
+      var linhasPR=todos.map(function(tp){
+        var pv=prevsDoMes.find(function(p){return p.tipo===tp;});
+        var prevVal=pv?pv.valorPrevisto:0; var realVal=realizadoMap[tp]||0;
+        totPrev+=prevVal; totReal+=realVal;
+        return {tipo:tp,prev:prevVal,real:realVal,diff:prevVal-realVal};
+      });
+      var h3=_pdfCabecalho('Relatório Previsão x Realizado',nomeMesFull(m)+'/'+a,PDF_CORES.previsto)+
+        '<table><tr><th>Categoria</th><th style="text-align:right;">Previsto</th><th style="text-align:right;">Realizado</th><th style="text-align:right;">Diferença</th></tr>'+
+        linhasPR.map(function(l){return '<tr><td>'+esc(l.tipo)+'</td><td class="mono" style="text-align:right;">'+(l.prev?fmtR(l.prev):'—')+'</td><td class="mono" style="text-align:right;">'+fmtR(l.real)+'</td><td class="mono '+(l.diff>=0?'pos':'neg')+'" style="text-align:right;">'+(l.diff>=0?'+':'')+fmtR(l.diff)+'</td></tr>';}).join('')+
+        '<tr class="total"><td>TOTAL</td><td style="text-align:right;">'+fmtR(totPrev)+'</td><td style="text-align:right;">'+fmtR(totReal)+'</td><td style="text-align:right;">'+fmtR(totPrev-totReal)+'</td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Previsão x Realizado',h3);
+    } else if(tipo==='patrimonial'){
+      var saldoContas=_totalSaldoContas();
+      var totalRec=DATA.receber.filter(function(r){return r.status!=='RECEBIDO';}).reduce(function(s,r){return s+r.valor;},0);
+      var totalPag=DATA.pagar.filter(function(p){return p.status!=='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+      var liq=saldoContas+totalRec-totalPag;
+      var h4=_pdfCabecalho('Posição Patrimonial','',PDF_CORES.saldo)+
+        '<table><tr><th>Indicador</th><th style="text-align:right;">Valor</th></tr>'+
+        '<tr><td>Saldo em Contas</td><td class="mono" style="text-align:right;">'+fmtR(saldoContas)+'</td></tr>'+
+        '<tr><td>A Receber (pendente)</td><td class="mono pos" style="text-align:right;">'+fmtR(totalRec)+'</td></tr>'+
+        '<tr><td>A Pagar (pendente)</td><td class="mono neg" style="text-align:right;">'+fmtR(totalPag)+'</td></tr>'+
+        '<tr class="total"><td>POSIÇÃO LÍQUIDA</td><td style="text-align:right;">'+fmtR(liq)+'</td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Posição Patrimonial',h4);
+    } else if(tipo==='geral'){
+      var totSaldo=_totalSaldoContas(), saldoMedio=_saldoMedioMensal();
+      var recMes=DATA.movimentacoes.filter(function(x){return x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.data&&x.data.indexOf(ma)===0&&x.tipo!=='Transferência';}).reduce(function(s,x){return s+x.valor;},0);
+      var despMes=DATA.movimentacoes.filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.data&&x.data.indexOf(ma)===0&&x.tipo!=='Transferência';}).reduce(function(s,x){return s+x.valor;},0);
+      var taxaPoup=recMes>0?((recMes-despMes)/recMes*100):0;
+      var proj6=totSaldo+(saldoMedio*6), proj12=totSaldo+(saldoMedio*12);
+      var projDez=totSaldo+(saldoMedio*_mesesRestantesAteDezembro()), proj3=totSaldo+(saldoMedio*3);
+      var h5=_pdfCabecalho('Resumo Geral — Indicadores Financeiros',nomeMesFull(m)+'/'+a,PDF_CORES.projecao)+
+        '<table><tr><th>Indicador</th><th style="text-align:right;">Valor</th></tr>'+
+        '<tr><td>Patrimônio Atual</td><td class="mono" style="text-align:right;">'+fmtR(totSaldo)+'</td></tr>'+
+        '<tr><td>Taxa de Poupança (mês)</td><td class="mono" style="text-align:right;">'+taxaPoup.toFixed(1)+'%</td></tr>'+
+        '<tr><td>Saldo Médio Mensal</td><td class="mono" style="text-align:right;">'+fmtR(saldoMedio)+'</td></tr>'+
+        '<tr><td>Projeção 3 Meses</td><td class="mono" style="text-align:right;">'+fmtR(proj3)+'</td></tr>'+
+        '<tr><td>Projeção 6 Meses</td><td class="mono" style="text-align:right;">'+fmtR(proj6)+'</td></tr>'+
+        '<tr><td>Projeção até 31 de Dezembro</td><td class="mono" style="text-align:right;">'+fmtR(projDez)+'</td></tr>'+
+        '<tr><td>Projeção 12 Meses</td><td class="mono" style="text-align:right;">'+fmtR(proj12)+'</td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Resumo Geral',h5);
+    }
+  };
+
+  // ------------------------------------------------------------
+  // Encadeia por cima do renderRelatorios já existente (mesmo
+  // padrão aditivo já usado no restante do arquivo).
+  // ------------------------------------------------------------
+  var _origRenderRelatoriosV16=renderRelatorios;
+  window.renderRelatorios=renderRelatorios=function(){
+    _origRenderRelatoriosV16.apply(this,arguments);
+    setTimeout(function(){
+      _injetarNovosCardsKpi();
+      _injetarCardSaldosEExportPDF();
+    },150);
+  };
+
+  // ==============================================================
+  // NEXUS ONE — EVOLUÇÃO v17.0 (aditiva, não-destrutiva)
+  //  1) Relatório "Contas a Pagar por Período" (datas escolhidas
+  //     pelo usuário) + botão próprio "Gerar PDF"
+  //  2) Relatório "Despesas por Subtipo" (período escolhido pelo
+  //     usuário) + botão próprio "Gerar PDF"
+  //  3) Botão "Gerar PDF" na "Previsão de Saldo" (usa a data alvo
+  //     já escolhida pelo usuário nesse relatório)
+  // ==============================================================
+
+  // --------------------------------------------------------------
+  // CONTAS A PAGAR POR PERÍODO (tela)
+  // --------------------------------------------------------------
+  window.relPagarPorPeriodo=function(){
+    var c=document.getElementById('relContent'); if(!c) return;
+    var a=ano(), m=mes();
+    var dtIni=a+'-'+pad(m)+'-01', dtFim=a+'-'+pad(m)+'-'+pad(new Date(a,m,0).getDate());
+    c.innerHTML='<div class="adv-report-card"><div class="adv-report-title">📤 Contas a Pagar por Período</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
+      '<div><label>Vencimento de</label><input type="date" id="rppIni" value="'+dtIni+'" style="width:150px;"></div>'+
+      '<div><label>Vencimento até</label><input type="date" id="rppFim" value="'+dtFim+'" style="width:150px;"></div>'+
+      '<button class="btn btn-sm btn-primary" onclick="execRelPagarPeriodo()">🔍 Gerar</button>'+
+      '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'pagarPeriodo\')">📄 Gerar PDF</button>'+
+      '</div><div id="rppResult"></div></div>';
+    c.scrollIntoView({behavior:'smooth'});
+    setTimeout(execRelPagarPeriodo,100);
+  };
+
+  window.execRelPagarPeriodo=function(){
+    var ini=document.getElementById('rppIni')?.value||'';
+    var fim=document.getElementById('rppFim')?.value||'';
+    var lista=(DATA.pagar||[]).filter(function(p){
+      return (!ini||(p.vencimento&&p.vencimento>=ini))&&(!fim||(p.vencimento&&p.vencimento<=fim));
+    }).sort(function(a2,b2){return (a2.vencimento||'').localeCompare(b2.vencimento||'');});
+    var el=document.getElementById('rppResult'); if(!el) return;
+    if(!lista.length){ el.innerHTML='<div class="empty"><div class="empty-icon">📤</div><div class="empty-title">Nenhum lançamento no período</div></div>'; return; }
+    var totGeral=lista.reduce(function(s,p){return s+p.valor;},0);
+    var totPago=lista.filter(function(p){return p.status==='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+    var totPendente=totGeral-totPago;
+    var h='<div class="table-wrap"><table><tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th style="text-align:right;">Valor</th><th>Status</th></tr>';
+    lista.forEach(function(p){
+      var stCls=p.status==='PAGO'?'bg-emerald':'bg-amber';
+      h+='<tr><td>'+fmtD(p.vencimento)+'</td><td>'+esc(p.descricao||'—')+'</td><td style="font-size:11px;color:var(--text3);">'+esc(p.tipo||'—')+'</td>'+
+        '<td class="mono" style="text-align:right;">'+fmtR(p.valor)+'</td><td><span class="badge '+stCls+'">'+esc(p.status||'PENDENTE')+'</span></td></tr>';
+    });
+    h+='<tr class="tr-totais"><td colspan="3">TOTAL DO PERÍODO</td><td class="mono" style="text-align:right;">'+fmtR(totGeral)+'</td><td></td></tr>';
+    h+='</table></div>'+
+      '<div class="grid g3" style="margin-top:14px;">'+
+      card('Total do Período','bg-sky','GERAL',fmtR(totGeral),'','')+
+      card('Já Pago','bg-emerald','PAGO',fmtR(totPago),'c-emerald','')+
+      card('Pendente','bg-coral','PENDENTE',fmtR(totPendente),'c-coral','')+
+      '</div>';
+    el.innerHTML=h;
+  };
+
+  // --------------------------------------------------------------
+  // DESPESAS POR SUBTIPO (tela) — período escolhido pelo usuário
+  // --------------------------------------------------------------
+  window.relDespesasPorSubtipo=function(){
+    var c=document.getElementById('relContent'); if(!c) return;
+    var a=ano(), m=mes();
+    var dtIni=a+'-'+pad(m)+'-01', dtFim=a+'-'+pad(m)+'-'+pad(new Date(a,m,0).getDate());
+    c.innerHTML='<div class="adv-report-card"><div class="adv-report-title">📊 Despesas por Subtipo</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
+      '<div><label>Data Início</label><input type="date" id="rdsIni" value="'+dtIni+'" style="width:150px;"></div>'+
+      '<div><label>Data Fim</label><input type="date" id="rdsFim" value="'+dtFim+'" style="width:150px;"></div>'+
+      '<button class="btn btn-sm btn-primary" onclick="execRelDespesasSubtipo()">🔍 Gerar</button>'+
+      '<button class="btn btn-sm" onclick="gerarPDFRelatorio(\'despesasSubtipo\')">📄 Gerar PDF</button>'+
+      '</div><div id="rdsResult"></div></div>';
+    c.scrollIntoView({behavior:'smooth'});
+    setTimeout(execRelDespesasSubtipo,100);
+  };
+
+  function _agruparDespesasPorSubtipo(ini,fim){
+    var movs=(DATA.movimentacoes||[]).filter(function(x){
+      return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&(!ini||x.data>=ini)&&(!fim||x.data<=fim);
+    });
+    var porTipo={};
+    movs.forEach(function(x){
+      var t=x.tipo||'Outros', sk=x.subtipo||'(sem subtipo)';
+      if(!porTipo[t]) porTipo[t]={total:0,subs:{}};
+      porTipo[t].total+=x.valor;
+      porTipo[t].subs[sk]=(porTipo[t].subs[sk]||0)+x.valor;
+    });
+    return porTipo;
+  }
+
+  window.execRelDespesasSubtipo=function(){
+    var ini=document.getElementById('rdsIni')?.value||'';
+    var fim=document.getElementById('rdsFim')?.value||'';
+    var porTipo=_agruparDespesasPorSubtipo(ini,fim);
+    var el=document.getElementById('rdsResult'); if(!el) return;
+    var chaves=Object.keys(porTipo);
+    if(!chaves.length){ el.innerHTML='<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">Nenhuma despesa no período</div></div>'; return; }
+    var totGeral=chaves.reduce(function(s,k){return s+porTipo[k].total;},0);
+    var h='<div class="table-wrap"><table><tr><th>Tipo / Subtipo</th><th style="text-align:right;">Total</th><th style="text-align:right;">%</th></tr>';
+    chaves.sort(function(k1,k2){return porTipo[k2].total-porTipo[k1].total;}).forEach(function(t){
+      h+='<tr style="background:rgba(255,77,106,.05);"><td style="font-weight:700;color:var(--coral);">'+esc(t)+'</td>'+
+        '<td class="mono c-coral" style="text-align:right;font-weight:700;">'+fmtR(porTipo[t].total)+'</td>'+
+        '<td style="text-align:right;">'+(totGeral>0?(porTipo[t].total/totGeral*100).toFixed(1):'0.0')+'%</td></tr>';
+      Object.entries(porTipo[t].subs).sort(function(s1,s2){return s2[1]-s1[1];}).forEach(function(se){
+        var pctSub=porTipo[t].total>0?(se[1]/porTipo[t].total*100):0;
+        h+='<tr><td style="padding-left:26px;font-size:12px;color:var(--text2);">└ '+esc(se[0])+'</td>'+
+          '<td class="mono" style="text-align:right;color:var(--text2);">'+fmtR(se[1])+'</td>'+
+          '<td style="text-align:right;font-size:11px;color:var(--text3);">'+pctSub.toFixed(1)+'%</td></tr>';
+      });
+    });
+    h+='<tr class="tr-totais"><td>TOTAL GERAL</td><td class="mono" style="text-align:right;">'+fmtR(totGeral)+'</td><td></td></tr></table></div>';
+    el.innerHTML=h;
+  };
+
+  // --------------------------------------------------------------
+  // Botão "Gerar PDF" na Previsão de Saldo (usa a data já
+  // escolhida pelo usuário no campo #relPrevSaldoDt)
+  // --------------------------------------------------------------
+  function _injetarBotaoPdfPrevisaoSaldo(){
+    var titleEl=document.querySelector('#relContent .adv-report-title');
+    if(!titleEl||titleEl.textContent.indexOf('Previsão de Saldo')===-1) return;
+    if(document.getElementById('btnPdfPrevSaldo')) return;
+    var dtWrap=document.getElementById('relPrevSaldoDt');
+    if(!dtWrap) return;
+    var btn=document.createElement('button');
+    btn.id='btnPdfPrevSaldo'; btn.className='btn btn-sm'; btn.style.marginLeft='8px';
+    btn.innerHTML='📄 Gerar PDF';
+    btn.onclick=function(){ gerarPDFRelatorio('previsaoSaldo'); };
+    dtWrap.parentNode.appendChild(btn);
+  }
+  // Observa mudanças em #relContent para inserir o botão quando o
+  // relatório de Previsão de Saldo for aberto (sem alterar a função original)
+  var _relContentObs=new MutationObserver(function(){ _injetarBotaoPdfPrevisaoSaldo(); });
+  document.addEventListener('DOMContentLoaded',function(){
+    var alvo=document.getElementById('relContent');
+    if(alvo) _relContentObs.observe(alvo,{childList:true});
+  });
+  // Caso o DOM já esteja pronto quando este script rodar:
+  if(document.readyState!=='loading'){
+    var alvoNow=document.getElementById('relContent');
+    if(alvoNow) _relContentObs.observe(alvoNow,{childList:true});
+  }
+
+  // --------------------------------------------------------------
+  // Estende gerarPDFRelatorio (já criado no v16) com os novos tipos
+  // --------------------------------------------------------------
+  var _gerarPDFRelatorioV16=window.gerarPDFRelatorio;
+  window.gerarPDFRelatorio=function(tipo){
+    if(tipo==='pagarPeriodo'){
+      var ini=document.getElementById('rppIni')?.value||'';
+      var fim=document.getElementById('rppFim')?.value||'';
+      var lista=(DATA.pagar||[]).filter(function(p){
+        return (!ini||(p.vencimento&&p.vencimento>=ini))&&(!fim||(p.vencimento&&p.vencimento<=fim));
+      }).sort(function(a2,b2){return (a2.vencimento||'').localeCompare(b2.vencimento||'');});
+      var totGeral=lista.reduce(function(s,p){return s+p.valor;},0);
+      var totPago=lista.filter(function(p){return p.status==='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+      var periodoTxt=(ini?fmtD(ini):'—')+' a '+(fim?fmtD(fim):'—');
+      var h=_pdfCabecalho('Contas a Pagar por Período',periodoTxt,PDF_CORES.despesa)+
+        '<table><tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th style="text-align:right;">Valor</th><th>Status</th></tr>'+
+        lista.map(function(p){return '<tr><td>'+fmtD(p.vencimento)+'</td><td>'+esc(p.descricao||'—')+'</td><td>'+esc(p.tipo||'—')+'</td>'+
+          '<td class="mono" style="text-align:right;">'+fmtR(p.valor)+'</td><td>'+esc(p.status||'PENDENTE')+'</td></tr>';}).join('')+
+        '<tr class="total"><td colspan="3">TOTAL DO PERÍODO</td><td style="text-align:right;">'+fmtR(totGeral)+'</td><td></td></tr>'+
+        '<tr><td colspan="3">Total Pago</td><td style="text-align:right;" class="pos">'+fmtR(totPago)+'</td><td></td></tr>'+
+        '<tr><td colspan="3">Total Pendente</td><td style="text-align:right;" class="neg">'+fmtR(totGeral-totPago)+'</td><td></td></tr>'+
+        '</table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Contas a Pagar por Período',h);
+    } else if(tipo==='despesasSubtipo'){
+      var iniD=document.getElementById('rdsIni')?.value||'';
+      var fimD=document.getElementById('rdsFim')?.value||'';
+      var porTipo=_agruparDespesasPorSubtipo(iniD,fimD);
+      var chaves=Object.keys(porTipo).sort(function(k1,k2){return porTipo[k2].total-porTipo[k1].total;});
+      var totGeralD=chaves.reduce(function(s,k){return s+porTipo[k].total;},0);
+      var periodoTxtD=(iniD?fmtD(iniD):'—')+' a '+(fimD?fmtD(fimD):'—');
+      var linhasHtml='';
+      chaves.forEach(function(t){
+        linhasHtml+='<tr style="background:#F8FAFC;"><td style="font-weight:800;">'+esc(t)+'</td><td style="text-align:right;font-weight:800;">'+fmtR(porTipo[t].total)+'</td></tr>';
+        Object.entries(porTipo[t].subs).sort(function(s1,s2){return s2[1]-s1[1];}).forEach(function(se){
+          linhasHtml+='<tr><td style="padding-left:24px;color:#475569;">'+esc(se[0])+'</td><td style="text-align:right;">'+fmtR(se[1])+'</td></tr>';
+        });
+      });
+      var h2=_pdfCabecalho('Despesas por Subtipo',periodoTxtD,PDF_CORES.despesa)+
+        '<table><tr><th>Tipo / Subtipo</th><th style="text-align:right;">Total</th></tr>'+linhasHtml+
+        '<tr class="total"><td>TOTAL GERAL</td><td style="text-align:right;">'+fmtR(totGeralD)+'</td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Despesas por Subtipo',h2);
+    } else if(tipo==='previsaoSaldo'){
+      var dt=document.getElementById('relPrevSaldoDt')?.value||new Date(Date.now()+30*86400000).toISOString().split('T')[0];
+      var saldoTot=_totalSaldoContas();
+      var aRec=DATA.receber.filter(function(r){return r.status!=='RECEBIDO'&&r.vencimento<=dt;}).reduce(function(s,r){return s+r.valor;},0);
+      var aPag=DATA.pagar.filter(function(p){return p.status!=='PAGO'&&p.vencimento<=dt;}).reduce(function(s,p){return s+p.valor;},0);
+      var compromissos=aRec-aPag;
+      var saldoProj=saldoTot+compromissos;
+      var h3=_pdfCabecalho('Previsão de Saldo','Projeção até '+fmtD(dt),PDF_CORES.projecao)+
+        '<table><tr><th>Descrição</th><th style="text-align:right;">Valor</th></tr>'+
+        '<tr><td>Saldo Atual</td><td style="text-align:right;">'+fmtR(saldoTot)+'</td></tr>'+
+        '<tr><td>A Receber até '+fmtD(dt)+'</td><td style="text-align:right;" class="pos">+'+fmtR(aRec)+'</td></tr>'+
+        '<tr><td>A Pagar até '+fmtD(dt)+'</td><td style="text-align:right;" class="neg">-'+fmtR(aPag)+'</td></tr>'+
+        '<tr><td>Compromissos Líquidos</td><td style="text-align:right;">'+(compromissos>=0?'+':'')+fmtR(compromissos)+'</td></tr>'+
+        '<tr class="total"><td>SALDO PROJETADO</td><td style="text-align:right;">'+fmtR(saldoProj)+'</td></tr></table>'+_pdfRodape();
+      _pdfAbrirEImprimir('Previsão de Saldo',h3);
+    } else {
+      _gerarPDFRelatorioV16(tipo);
+    }
+  };
+
+  // --------------------------------------------------------------
+  // Adiciona os 2 novos cards de relatório ao grid (aditivo)
+  // --------------------------------------------------------------
+  function _injetarCardsV17(){
+    var rg=document.getElementById('relGrid');
+    if(!rg) return;
+    if(!document.getElementById('relCardPagarPeriodo')){
+      var d1=document.createElement('div');
+      d1.className='card'; d1.id='relCardPagarPeriodo'; d1.style.cursor='pointer';
+      d1.onclick=function(){ relPagarPorPeriodo(); };
+      d1.innerHTML='<div style="font-size:32px;margin-bottom:12px;">📤</div>'+
+        '<div style="font-size:14px;font-weight:700;margin-bottom:5px;">Contas a Pagar por Período</div>'+
+        '<div style="font-size:11px;color:var(--text3);">Escolha o período de vencimento</div>';
+      rg.appendChild(d1);
+    }
+    if(!document.getElementById('relCardDespesasSubtipo')){
+      var d2=document.createElement('div');
+      d2.className='card'; d2.id='relCardDespesasSubtipo'; d2.style.cursor='pointer';
+      d2.onclick=function(){ relDespesasPorSubtipo(); };
+      d2.innerHTML='<div style="font-size:32px;margin-bottom:12px;">📊</div>'+
+        '<div style="font-size:14px;font-weight:700;margin-bottom:5px;">Despesas por Subtipo</div>'+
+        '<div style="font-size:11px;color:var(--text3);">Detalhamento por tipo e subtipo — período livre</div>';
+      rg.appendChild(d2);
+    }
+    var box=document.getElementById('relExportPdfBox');
+    if(box && !document.getElementById('btnExpPagarPeriodo')){
+      var wrap=box.querySelector('div[style*="display:flex"]');
+      if(wrap){
+        var b1=document.createElement('button'); b1.id='btnExpPagarPeriodo'; b1.className='btn btn-sm';
+        b1.innerHTML='📄 A Pagar por Período'; b1.onclick=function(){ relPagarPorPeriodo(); };
+        var b2=document.createElement('button'); b2.id='btnExpDespSubtipo'; b2.className='btn btn-sm';
+        b2.innerHTML='📄 Despesas por Subtipo'; b2.onclick=function(){ relDespesasPorSubtipo(); };
+        wrap.appendChild(b1); wrap.appendChild(b2);
+      }
+    }
+  }
+
+  var _origRenderRelatoriosV17=renderRelatorios;
+  window.renderRelatorios=renderRelatorios=function(){
+    _origRenderRelatoriosV17.apply(this,arguments);
+    setTimeout(_injetarCardsV17,180);
+  };
+
+  console.log('⬡ Nexus One v17.0 — Relatórios: A Pagar por Período (PDF), Despesas por Subtipo (PDF), PDF na Previsão de Saldo.');
+
+  console.log('⬡ Nexus One v16.0 — Upgrade Módulo Relatórios aplicado:');
+  console.log('  ✓ Card "Projeção até 31 de Dezembro"');
+  console.log('  ✓ Card "Projeção 3 Meses"');
+  console.log('  ✓ Relatório de Saldos das Contas + botão PDF próprio');
+  console.log('  ✓ Botões individuais de Gerar PDF por relatório');
+  console.log('  ✓ Correção: A Pagar só é REALIZADO quando baixado (Comparativo Previsto x Realizado)');
+})();
+</script>
 </body>
 </html>
