@@ -435,6 +435,10 @@ input[type="month"]::-webkit-calendar-picker-indicator,
 input[type="date"]::-webkit-calendar-picker-indicator{
   filter: invert(0.8); cursor:pointer; opacity:1;
 }
+/* Campos de mês convertidos pelo fallback cross-browser (nexusMonthPickerFix)
+   quando o navegador não suporta <input type="month"> nativamente. */
+.month-br-wrap{ display:inline-flex; }
+.month-br-input{ text-align:center; width:110px; }
 label{
   font-size:10px;text-transform:uppercase;letter-spacing:1.5px;
   color:var(--text2);font-weight:700;display:block;margin-bottom:5px;
@@ -14464,6 +14468,108 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   };
 })();
 </script>
+<script>
+// ================================================================
+// Correção: campos "Mês exibido" / "Mês de edição" (e qualquer outro
+// <input type="month"> do sistema) sem o ícone de calendário quando
+// hospedado no GitHub Pages.
+//
+// CAUSA RAIZ: <input type="month"> não é suportado nativamente por todos
+// os navegadores (por exemplo, o Firefox nunca implementou esse tipo de
+// campo). Nesses navegadores o campo vira um <input type="text"> comum,
+// exibindo o valor cru "2026-08" sem nenhum seletor/ícone — não é um
+// problema de dados nem de CSS, é suporte do navegador ao tipo de campo.
+// A correção anterior (color-scheme: dark) resolve apenas o caso do ícone
+// invisível em navegadores que TÊM suporte nativo (Chrome/Edge); aqui
+// corrigimos também os navegadores que não têm suporte algum.
+//
+// SOLUÇÃO (mesmo padrão já usado neste sistema para <input type="date">,
+// função _brDateize, poucas linhas abaixo): converte SEMPRE o campo para
+// type="text" com formatação MM/AAAA + botões ◀ ▶ para trocar de mês, em
+// vez de depender da UI nativa do navegador (que varia entre navegadores e
+// hospedagens — daí funcionar num ambiente e não no GitHub Pages). Mantém
+// a MESMA leitura/escrita de .value em formato ISO "AAAA-MM" — ou seja,
+// TODO o código já existente que lê/escreve
+// document.getElementById('prevMesEdit').value continua funcionando sem
+// nenhuma alteração, em qualquer navegador ou hospedagem.
+// ================================================================
+(function nexusMonthPickerFix(){
+  var _nativeValueDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function isoToBR(iso){ var p=String(iso||'').split('-'); return (p.length===2)?(p[1]+'/'+p[0]):''; }
+  function brToISO(br){ var m=String(br||'').match(/^(\d{2})\/(\d{4})$/); return m?(m[2]+'-'+m[1]):''; }
+
+  function monthize(el){
+    if(!el || el.dataset.monthFixed) return;
+    el.dataset.monthFixed='1';
+    var iso=_nativeValueDesc.get.call(el)||'';
+    el.setAttribute('type','text');
+    el.setAttribute('inputmode','numeric');
+    el.setAttribute('placeholder','MM/AAAA');
+    el.setAttribute('maxlength','7');
+    el.setAttribute('autocomplete','off');
+    el.classList.add('month-br-input');
+    _nativeValueDesc.set.call(el, isoToBR(iso));
+    Object.defineProperty(el,'value',{
+      configurable:true,
+      get:function(){ return brToISO(_nativeValueDesc.get.call(el)); },
+      set:function(v){ _nativeValueDesc.set.call(el, isoToBR(v)); }
+    });
+    el.addEventListener('input', function(){
+      var raw=_nativeValueDesc.get.call(el).replace(/\D/g,'').slice(0,6);
+      var out=raw;
+      if(raw.length>2) out=raw.slice(0,2)+'/'+raw.slice(2);
+      _nativeValueDesc.set.call(el, out);
+      try{ el.setSelectionRange(out.length,out.length); }catch(e){}
+    });
+    // Botões ◀ ▶ para trocar de mês sem precisar digitar — igual em
+    // qualquer navegador, já que não depende de UI nativa nenhuma.
+    if(!el.parentElement || !el.parentElement.classList.contains('month-br-wrap')){
+      var wrap=document.createElement('div');
+      wrap.className='month-br-wrap';
+      wrap.style.cssText='display:flex;align-items:center;gap:4px;';
+      el.parentNode.insertBefore(wrap, el);
+      var btnPrev=document.createElement('button');
+      btnPrev.type='button'; btnPrev.textContent='◀';
+      btnPrev.className='btn btn-xs';
+      btnPrev.style.cssText='padding:6px 9px;';
+      var btnNext=document.createElement('button');
+      btnNext.type='button'; btnNext.textContent='▶';
+      btnNext.className='btn btn-xs';
+      btnNext.style.cssText='padding:6px 9px;';
+      wrap.appendChild(btnPrev); wrap.appendChild(el); wrap.appendChild(btnNext);
+      function step(delta){
+        var v=el.value; var p=v.split('-');
+        var a=parseInt(p[0],10), m=parseInt(p[1],10);
+        if(!a||!m) return;
+        m+=delta;
+        if(m<1){m=12;a--;} if(m>12){m=1;a++;}
+        el.value=a+'-'+pad2(m);
+        el.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      btnPrev.addEventListener('click', function(){ step(-1); });
+      btnNext.addEventListener('click', function(){ step(1); });
+    }
+  }
+
+  function scanMonths(root){
+    if(!root || !root.querySelectorAll) return;
+    root.querySelectorAll('input[type="month"]').forEach(monthize);
+  }
+  scanMonths(document);
+  var _monthObserver=new MutationObserver(function(muts){
+    muts.forEach(function(mu){
+      if(!mu.addedNodes) return;
+      mu.addedNodes.forEach(function(n){
+        if(n.nodeType!==1) return;
+        if(n.matches && n.matches('input[type="month"]')) monthize(n);
+        scanMonths(n);
+      });
+    });
+  });
+  _monthObserver.observe(document.body,{childList:true,subtree:true});
+})();
 </script>
 <script>
 // ================================================================
