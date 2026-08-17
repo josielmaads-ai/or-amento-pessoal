@@ -15326,5 +15326,210 @@ async function _cdbControlRestoreFromBackup(cdbData){
   console.log('✓ Nexus Previsões — Melhorias 4/5/6 carregadas (fontes de receita, investimento fixo, gráfico de tendência).');
 })();
 </script>
+<script>
+// ================================================================
+// CDB Control — Sincronização com Supabase e Backup JSON (NEXUS ONE)
+//
+// PROBLEMA RAIZ:
+//   O CDB Control roda dentro de um iframe (srcdoc) com seu próprio
+//   IndexedDB ('cdbControlDB') e state JS isolado. O save() do Nexus
+//   envia JSON.stringify(DATA) ao Supabase e ao localStorage, mas DATA
+//   nunca contém os dados do CDB Control — eles ficam no state do iframe.
+//
+// SOLUÇÃO:
+//   1. Patch em save(): antes de gravar, captura o state do iframe e
+//      escreve em DATA.cdbControl. Assim o Supabase e o localStorage
+//      passam a incluir os dados do CDB Control automaticamente.
+//   2. Patch em exportBackup(): garante o mesmo, mesmo se save() for
+//      chamado internamente com DATA.cdbControl já zerado.
+//   3. Restauração: após importBackup() e após restaurar do Supabase,
+//      injeta DATA.cdbControl de volta no iframe (merge por ID).
+//   4. Auto-sync periódico: a cada 60s, se o iframe foi aberto e há
+//      sessão Supabase ativa, força um save() silencioso para garantir
+//      que mudanças feitas no CDB Control cheguem à nuvem mesmo sem
+//      o usuário clicar em "Salvar".
+// ================================================================
+(function nexusCdbControlSync(){
+  'use strict';
+
+  // ── Captura o state atual do iframe (null se não carregado) ──
+  function cdbSnapshot(){
+    try{
+      var frame = document.getElementById('cdbControlFrame');
+      var w = frame && frame.contentWindow;
+      if(!w || !w.state || typeof w.state.cdbs === 'undefined') return null;
+      return {
+        bancos:       JSON.parse(JSON.stringify(w.state.bancos       || [])),
+        cdbs:         JSON.parse(JSON.stringify(w.state.cdbs         || [])),
+        medicoes:     JSON.parse(JSON.stringify(w.state.medicoes     || [])),
+        movimentacoes:JSON.parse(JSON.stringify(w.state.movimentacoes|| [])),
+        baselines:    JSON.parse(JSON.stringify(w.state.baselines    || [])),
+        _ts:          Date.now()
+      };
+    }catch(e){ return null; }
+  }
+
+  // ── Injeta dados de volta no iframe (merge por ID, sem apagar existentes) ──
+  function cdbRestore(data){
+    if(!data) return;
+    var frame = document.getElementById('cdbControlFrame');
+    var w = frame && frame.contentWindow;
+    if(!w || !w.state || typeof w.dbPut !== 'function') return;
+    var merge = function(existing, incoming){
+      var ids = {}; (existing||[]).forEach(function(x){ if(x&&x.id) ids[x.id]=true; });
+      (incoming||[]).forEach(function(x){ if(x&&x.id&&!ids[x.id]) existing.push(x); });
+    };
+    merge(w.state.bancos       = w.state.bancos||[],        data.bancos||[]);
+    merge(w.state.cdbs         = w.state.cdbs||[],          data.cdbs||[]);
+    merge(w.state.medicoes     = w.state.medicoes||[],      data.medicoes||[]);
+    merge(w.state.movimentacoes= w.state.movimentacoes||[], data.movimentacoes||[]);
+    merge(w.state.baselines    = w.state.baselines||[],     data.baselines||[]);
+    // Persiste no IndexedDB do iframe
+    ['bancos','cdbs','medicoes','movimentacoes','baselines'].forEach(function(store){
+      (data[store]||[]).forEach(function(obj){
+        try{ w.dbPut(store, obj); }catch(e){}
+      });
+    });
+    if(typeof w.renderPage === 'function') try{ w.renderPage(); }catch(e){}
+  }
+
+  // ── Patch em save(): injeta snapshot do CDB Control em DATA antes de gravar ──
+  var _origSave = window.save;
+  window.save = function(silent){
+    var snap = cdbSnapshot();
+    if(snap) window.DATA.cdbControl = snap;
+    return _origSave.apply(this, arguments);
+  };
+
+  // ── Patch em exportBackup(): garante snapshot fresco no momento de exportar ──
+  var _patchExport = function(){
+    var _origExport = window.exportBackup;
+    if(typeof _origExport !== 'function') return;
+    window.exportBackup = function(){
+      var snap = cdbSnapshot();
+      if(snap) window.DATA.cdbControl = snap;
+      return _origExport.apply(this, arguments);
+    };
+  };
+  // exportBackup pode ser redefinida por scripts posteriores; aguarda carregamento completo
+  window.addEventListener('load', function(){
+    setTimeout(_patchExport, 500);
+  });
+
+  // ── Após importBackup() restaurar DATA, injeta cdbControl no iframe ──
+  // Monitora mudanças em DATA.cdbControl com polling leve (não usa MutationObserver
+  // pois é um objeto JS, não DOM).
+  var _lastCdbTs = 0;
+  setInterval(function(){
+    var d = window.DATA;
+    if(!d || !d.cdbControl) return;
+    var ts = d.cdbControl._ts || 0;
+    if(ts && ts !== _lastCdbTs){
+      _lastCdbTs = ts;
+      // Só restaura se o iframe já estiver aberto (para não forçar carregamento)
+      var frame = document.getElementById('cdbControlFrame');
+      var w = frame && frame.contentWindow;
+      if(w && w.state && typeof w.dbPut === 'function'){
+        cdbRestore(d.cdbControl);
+      }
+    }
+  }, 2000);
+
+  // ── Restauração após sync com Supabase (quando _sbRestoreFromCloud é chamado) ──
+  // O Supabase restaura DATA do servidor; se DATA vier com cdbControl, injeta no iframe.
+  var _origSbRestore = window._sbRestoreFromCloud;
+  if(typeof _origSbRestore === 'function'){
+    window._sbRestoreFromCloud = function(){
+      var result = _origSbRestore.apply(this, arguments);
+      var checkAndRestore = function(){
+        if(window.DATA && window.DATA.cdbControl){
+          var frame = document.getElementById('cdbControlFrame');
+          var w = frame && frame.contentWindow;
+          if(w && w.state && typeof w.dbPut === 'function'){
+            cdbRestore(window.DATA.cdbControl);
+          }
+        }
+      };
+      // Aguarda o DATA ser atualizado pela função original
+      setTimeout(checkAndRestore, 800);
+      return result;
+    };
+  }
+
+  // ── Auto-sync periódico: salva silenciosamente a cada 60s se o iframe ──
+  // ── foi visitado e há sessão Supabase ativa ──
+  var _cdbLastSyncTs = 0;
+  setInterval(function(){
+    // Só dispara se há sessão Supabase e o iframe foi aberto nesta sessão
+    if(typeof window._sbSession === 'undefined' || !window._sbSession) return;
+    var frame = document.getElementById('cdbControlFrame');
+    var w = frame && frame.contentWindow;
+    if(!w || !w.state || typeof w.state.cdbs === 'undefined') return;
+    // Só sincroniza se houve atividade no CDB Control nos últimos 5 min
+    var now = Date.now();
+    if(now - _cdbLastSyncTs < 60000) return;
+    _cdbLastSyncTs = now;
+    var snap = cdbSnapshot();
+    if(!snap || !snap.cdbs.length) return;
+    // Injeta em DATA e dispara save silencioso (→ Supabase)
+    window.DATA.cdbControl = snap;
+    if(typeof window._sbUpsertSnapshot === 'function'){
+      window._sbUpsertSnapshot(JSON.stringify(window.DATA), true).catch(function(){});
+    }
+  }, 30000);
+
+  // ── Quando o CDB Control fizer uma operação (salvar banco, medição, etc.) ──
+  // injeta um listener no iframe para capturar mudanças e refletir no DATA ──
+  var _cdbListenerInstalled = false;
+  function installCdbListener(){
+    if(_cdbListenerInstalled) return;
+    var frame = document.getElementById('cdbControlFrame');
+    var w = frame && frame.contentWindow;
+    if(!w || !w.dbPut) return;
+    _cdbListenerInstalled = true;
+    // Wrap dbPut do iframe: a cada escrita, agenda snapshot para DATA
+    var _iOrigDbPut = w.dbPut;
+    w.dbPut = function(store, obj){
+      var result = _iOrigDbPut.apply(this, arguments);
+      // Agenda snapshot leve (debounce 1.5s)
+      clearTimeout(w._nexusSyncTimer);
+      w._nexusSyncTimer = setTimeout(function(){
+        var snap = cdbSnapshot();
+        if(snap) window.DATA.cdbControl = snap;
+        // Dispara save silencioso no Nexus para persistir no localStorage/Supabase
+        if(typeof window.save === 'function') window.save(true);
+      }, 1500);
+      return result;
+    };
+    console.log('[NexusCDB] Listener de sincronização instalado no iframe CDB Control.');
+  }
+
+  // Tenta instalar o listener quando o iframe é renderizado
+  var _frameCheckInterval = setInterval(function(){
+    var frame = document.getElementById('cdbControlFrame');
+    var w = frame && frame.contentWindow;
+    if(w && w.dbPut && !_cdbListenerInstalled){
+      installCdbListener();
+      clearInterval(_frameCheckInterval);
+    }
+  }, 1000);
+  // Para de tentar após 5 min (módulo não foi aberto)
+  setTimeout(function(){ clearInterval(_frameCheckInterval); }, 300000);
+
+  // ── Ao navegar para o módulo CDB Control, tenta instalar o listener ──
+  var _origNavigateTo = window.navigateTo;
+  if(typeof _origNavigateTo === 'function'){
+    window.navigateTo = function(mod){
+      var result = _origNavigateTo.apply(this, arguments);
+      if(mod === 'cdbcontrol'){
+        setTimeout(function(){ installCdbListener(); }, 1500);
+      }
+      return result;
+    };
+  }
+
+  console.log('✓ CDB Control — Sincronização com Supabase e Backup JSON ativada.');
+})();
+</script>
 </body>
 </html>
