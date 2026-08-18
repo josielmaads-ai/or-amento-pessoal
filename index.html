@@ -14566,13 +14566,14 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     m--; if(m<1){ m=12; a--; }
     return a+'-'+pad(m);
   }
-  // Soma dos lançamentos em "A Pagar" já cadastrados para essa categoria,
-  // com vencimento dentro do mês — representa o quanto já está
-  // efetivamente comprometido (agendado), pago ou não, diferente do
-  // "Realizado" (que só conta o que já foi baixado).
+  // Soma dos lançamentos PENDENTES em "A Pagar" (ainda não baixados) para
+  // essa categoria, com vencimento dentro do mês — representa o quanto
+  // ainda falta pagar. Lançamentos já baixados (status PAGO) NÃO entram
+  // aqui — esses já aparecem na coluna "Realizado", que é alimentada
+  // exclusivamente por baixas efetivas (ver realizadoCompleto).
   function comprometidoCategoria(tipoNome, key){
     return (DATA.pagar||[]).filter(function(p){
-      return p.tipo===tipoNome && p.vencimento && p.vencimento.slice(0,7)===key;
+      return p.tipo===tipoNome && p.status!=='PAGO' && p.vencimento && p.vencimento.slice(0,7)===key;
     }).reduce(function(s,p){ return s+(Number(p.valor)||0); },0);
   }
 
@@ -14604,19 +14605,20 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     var receita=getReceita(key);
     var linhas=distribuicoesDoMes(key);
     var disponiveis=categoriasDisponiveis(key);
-    var totalPct=0, totalVal=0;
+    var totalPct=0, totalVal=0, totalComprometido=0;
 
     var linhasHtml=linhas.map(function(p){
       var val=recalcularValor(receita,p.percentualReceita);
       totalPct+=(parseFloat(p.percentualReceita)||0); totalVal+=val;
       var tipoInfo=(DATA.tipos||[]).find(function(t){return t.nome===p.tipo;});
       var comprometido=comprometidoCategoria(p.tipo,key);
+      totalComprometido+=comprometido;
       var estourou = comprometido>val && val>0;
       return '<tr>'+
         '<td>'+esc(tipoInfo&&tipoInfo.emoji||'')+' '+esc(p.tipo)+'</td>'+
         '<td style="text-align:right;"><input type="number" step="0.01" min="0" max="100" id="pct_'+encodeURIComponent(p.tipo)+'" value="'+p.percentualReceita+'" style="width:80px;text-align:right;" onchange="n9AtualizarPercentualCategoria(\''+p.tipo.replace(/'/g,"\\'")+'\',\''+key+'\')"> %</td>'+
         '<td class="mono c-amber" id="n9val_'+encodeURIComponent(p.tipo)+'" style="text-align:right;">'+fmtR(val)+'</td>'+
-        '<td class="mono" style="text-align:right;color:'+(estourou?'var(--coral)':'var(--text3)')+';" title="Total já cadastrado em A Pagar com vencimento neste mês, pago ou não">'+(comprometido?fmtR(comprometido):'—')+(estourou?' ⚠️':'')+'</td>'+
+        '<td class="mono" style="text-align:right;color:'+(estourou?'var(--coral)':'var(--text3)')+';" title="Total pendente em A Pagar (não baixado) com vencimento neste mês">'+(comprometido?fmtR(comprometido):'—')+(estourou?' ⚠️':'')+'</td>'+
         '<td style="white-space:nowrap;">'+
           '<button class="btn btn-xs btn-edit" onclick="n9EditarDistribuicao(\''+p.tipo.replace(/'/g,"\\'")+'\',\''+key+'\')">✏ Editar</button> '+
           '<button class="btn btn-xs btn-danger" onclick="n9ExcluirDistribuicao(\''+p.tipo.replace(/'/g,"\\'")+'\',\''+key+'\')">🗑 Excluir</button>'+
@@ -14659,7 +14661,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     var tabelaHtml = '<div class="table-wrap"><table>'+
         '<tr><th>Categoria</th><th style="text-align:right;">Percentual (%)</th><th style="text-align:right;">Valor (R$)</th><th style="text-align:right;">Já Comprometido (A Pagar)</th><th>Ações</th></tr>'+
         (linhasHtml || '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text3);">Nenhuma categoria distribuída ainda. Use "Adicionar categoria" abaixo.</td></tr>')+
-        (linhas.length ? '<tr class="tr-totais"><td>Total distribuído</td><td class="mono" style="text-align:right;">'+totalPct.toFixed(1)+'%</td><td class="mono c-amber" style="text-align:right;">'+fmtR(totalVal)+'</td><td></td><td></td></tr>' : '')+
+        (linhas.length ? '<tr class="tr-totais"><td>Total distribuído</td><td class="mono" style="text-align:right;">'+totalPct.toFixed(1)+'%</td><td class="mono c-amber" style="text-align:right;">'+fmtR(totalVal)+'</td><td class="mono" style="text-align:right;">'+fmtR(totalComprometido)+'</td><td></td></tr>' : '')+
       '</table></div>'+
       (disponiveis.length ?
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">'+
