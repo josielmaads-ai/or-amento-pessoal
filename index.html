@@ -8001,6 +8001,18 @@ function relPrevisaoRealizado(){
         <td style="text-align:right;font-size:12px;">${pct!==null?`<span style="color:${pct<=100?'var(--emerald)':'var(--coral)'};">${pct.toFixed(0)}%</span>`:'—'}</td>
       </tr>`;
     });
+    // TOTAL (regra §8.2): soma matematicamente consistente com as linhas acima.
+    const totPrev=Array.from(todosOsTipos).reduce((s,tipo)=>{const p=prevsDoMes.find(x=>x.tipo===tipo);return s+(p?p.valorPrevisto:0);},0);
+    const totReal=Array.from(todosOsTipos).reduce((s,tipo)=>s+(realizado[tipo]||0),0);
+    const totDiff=totPrev-totReal;
+    const totPct=totPrev>0?(totReal/totPrev*100):null;
+    h+=`<tr style="font-weight:700;border-top:2px solid var(--border);">
+        <td>TOTAL</td>
+        <td class="mono" style="text-align:right;">${fmtR(totPrev)}</td>
+        <td class="mono" style="text-align:right;">${fmtR(totReal)}</td>
+        <td class="mono" style="text-align:right;color:${totDiff>=0?'var(--emerald)':'var(--coral)'};">${(totDiff>=0?'+':'')+fmtR(totDiff)}</td>
+        <td style="text-align:right;font-size:12px;">${totPct!==null?`<span style="color:${totPct<=100?'var(--emerald)':'var(--coral)'};">${totPct.toFixed(0)}%</span>`:'—'}</td>
+      </tr>`;
     h+='</table></div>';
   }
   h+='</div>';
@@ -8044,6 +8056,20 @@ function renderPrevisoes(){
   <div class="card" style="margin-bottom:18px;">
     <div class="sec-header" style="margin-top:0;"><span class="sec-title">📋 Previsões Cadastradas</span><div class="sec-line"></div></div>
     <div id="prevTabelaAll"></div>
+  </div>
+
+  <!-- SEÇÃO C: Relatórios de Previsões (migrados do módulo Relatórios — §18/§21) -->
+  <div class="card" id="prevRelatoriosFooter" style="margin-bottom:18px;">
+    <div class="sec-header" style="margin-top:0;"><span class="sec-title">📊 Relatórios de Previsões</span><div class="sec-line"></div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;">
+      <div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes('relPrevisaoRealizado')"><div style="font-size:26px;margin-bottom:8px;">📅</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Previsão vs Realizado</div><div style="font-size:11px;color:var(--text3);">Compare metas com gastos reais</div></div>
+      <div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes('relPrevistoRealizadoNexus')"><div style="font-size:26px;margin-bottom:8px;">📐</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Comparativo Previsto x Realizado</div><div style="font-size:11px;color:var(--text3);">Por categoria · Onde estourou</div></div>
+      <div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes('relReceitasPrevistas')"><div style="font-size:26px;margin-bottom:8px;">📈</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Receitas Previstas</div><div style="font-size:11px;color:var(--text3);">Planejadas por mês</div></div>
+      <div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes('relReceitasRealizadas')"><div style="font-size:26px;margin-bottom:8px;">📊</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Receitas Realizadas</div><div style="font-size:11px;color:var(--text3);">Efetivamente recebidas</div></div>
+      <div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes('relDespesasPrevistas')"><div style="font-size:26px;margin-bottom:8px;">📉</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Despesas Previstas</div><div style="font-size:11px;color:var(--text3);">Planejadas por categoria</div></div>
+      <div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes('relDespesasRealizadas')"><div style="font-size:26px;margin-bottom:8px;">💳</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Despesas Realizadas</div><div style="font-size:11px;color:var(--text3);">Saídas registradas em Contas</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:10px;">Abrir um relatório leva você até o módulo Relatórios, sem esconder as demais seções de Previsões — você pode voltar a qualquer momento.</div>
   </div>`;
 
   // Preenche formulário com mês atual
@@ -8169,6 +8195,16 @@ window.excluirPrevisao = function(id){
   save(true);
   renderPrevisoes();
   showToast('🗑 Previsão excluída');
+};
+
+// §18/§21: acesso aos "Relatórios de Previsões" a partir do rodapé do módulo
+// Previsões, reaproveitando 100% as funções já existentes do módulo
+// Relatórios (nenhuma lógica duplicada, nenhum risco de os valores
+// divergirem entre módulos — fonte única da verdade). Navega até
+// Relatórios e abre o relatório pedido; nada em Previsões é escondido.
+window.abrirRelatorioDePrevisoes = function(fnName){
+  navigateTo('relatorios');
+  setTimeout(function(){ if(typeof window[fnName]==='function') window[fnName](); }, 350);
 };
 
 // ================================================================
@@ -10804,11 +10840,15 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     var p=parseMA(monthKey), days=new Date(p.a,p.m,0).getDate(), rows=[];
     for(var d=1;d<=days;d++){
       var ds=monthKey+'-'+pad(d), ent=0,sai=0;
-      // Correcao de exibicao parcial: consolida movimentacoes, receber e pagar do periodo inteiro.
+      // CORRECAO CRITICA (auditoria Fluxo de Caixa Diario): o fluxo de caixa deve
+      // refletir apenas o que foi EFETIVAMENTE REALIZADO no modulo CONTAS
+      // (DATA.movimentacoes). Contas a Receber/Pagar ainda PENDENTES (nao baixadas)
+      // sao PREVISAO, nao fluxo de caixa realizado, e nao podem ser somadas aqui —
+      // caso contrario o mesmo valor seria contado de novo quando a baixa ocorrer
+      // (ja gera uma movimentacao) e o card/tabela/grafico ficariam inconsistentes
+      // com o restante do sistema (regra de fonte unica da verdade).
       ent+=(DATA.movimentacoes||[]).filter(function(x){return x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.data===ds;}).reduce(function(s,x){return s+(x.valor||0);},0);
       sai+=(DATA.movimentacoes||[]).filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.data===ds;}).reduce(function(s,x){return s+(x.valor||0);},0);
-      ent+=(DATA.receber||[]).filter(function(r){return r.status!=='RECEBIDO'&&r.vencimento===ds;}).reduce(function(s,r){return s+(r.valor||0);},0);
-      sai+=(DATA.pagar||[]).filter(function(pg){return pg.status!=='PAGO'&&pg.vencimento===ds;}).reduce(function(s,pg){return s+(pg.valor||0);},0);
       rows.push({d:d,ds:ds,ent:ent,sai:sai});
     }
     var te=rows.reduce(function(s,x){return s+x.ent;},0), ts=rows.reduce(function(s,x){return s+x.sai;},0);
@@ -15569,28 +15609,20 @@ async function _cdbControlRestoreFromBackup(cdbData){
     return x.descricao===descEsperada && x.data===dtPag && Math.abs((x.valor||0)-(p.valorPago!=null?p.valorPago:p.valor))<0.01;
   }
   function realizadoCompleto(mesAno, tipoNome){
+    // CORREÇÃO CRÍTICA (auditoria §17/§19/§20): DESPESA REALIZADA deve vir
+    // EXCLUSIVAMENTE de saídas efetivamente registradas no módulo CONTAS
+    // (DATA.movimentacoes, tipoOp==='DESPESA'). O bloco anterior somava
+    // adicionalmente registros de DATA.pagar com status PAGO como
+    // "fallback" para baixas antigas sem vínculo — isso violava a regra
+    // (REALIZADO ≠ A PAGAR, mesmo pago) e podia gerar valores diferentes
+    // dos demais cards/tabelas que já usam somente CONTAS, quebrando a
+    // fonte única da verdade. Toda baixa em A Pagar (darBaixaPagar) já
+    // gera uma movimentação correspondente em CONTAS, então essa é a
+    // única fonte necessária.
     var total = 0;
-    // 1) Movimentações DESPESA ativas neste mês/tipo
     (DATA.movimentacoes||[]).forEach(function(x){
       if(x.tipoOp==='DESPESA' && x.status!=='ANULADO' && (x.data||'').slice(0,7)===mesAno && (!tipoNome||x.tipo===tipoNome)){
-        // Evita duplicar se foi gerada por uma baixa de A Pagar (vínculo
-        // direto via pagarId, ou reconhecida pelo padrão de baixas antigas)
-        var vemDeBaixa = x.pagarId ? true : (DATA.pagar||[]).some(function(p){ return _movimentacaoRefereABaixa(x,p); });
-        if(!vemDeBaixa) total += (x.valor||0);
-      }
-    });
-    // 2) A Pagar com status PAGO neste mês/tipo (que NÃO geraram movimentação)
-    (DATA.pagar||[]).forEach(function(p){
-      if(p.status==='PAGO' && (!tipoNome||p.tipo===tipoNome)){
-        var dtPagamento = p.dataPagamento || p.vencimento || '';
-        if(dtPagamento.slice(0,7)===mesAno){
-          // Só conta se não há nenhuma movimentação (nova ou antiga) que já
-          // represente esta mesma baixa
-          var temMov = (DATA.movimentacoes||[]).some(function(x){
-            return x.tipoOp==='DESPESA' && x.status!=='ANULADO' && _movimentacaoRefereABaixa(x,p);
-          });
-          if(!temMov) total += (p.valor||0);
-        }
+        total += (x.valor||0);
       }
     });
     return Math.round(total*100)/100;
@@ -15744,6 +15776,43 @@ async function _cdbControlRestoreFromBackup(cdbData){
       var key = document.getElementById('prevMesEdit')?.value || document.getElementById('prevFiltroMes')?.value || mesAnoAtual();
       if(typeof window.n9ResumoPrev==='function') window.n9ResumoPrev(key);
     }, 200);
+  };
+
+  // =============================================================
+  // §18/§21 — RODAPÉ DO MÓDULO PREVISÕES: acesso aos Relatórios de
+  // Previsões. Injetado por último (após todas as versões de
+  // renderPrevisoes que substituem o innerHTML de #previsoesContent
+  // por completo) para garantir que sempre apareça, sem depender de
+  // nenhuma das versões anteriores chamar a próxima na cadeia.
+  // =============================================================
+  var _origRPFooter = window.renderPrevisoes;
+  window.renderPrevisoes = function(){
+    _origRPFooter.apply(this, arguments);
+    setTimeout(function(){
+      var c = document.getElementById('previsoesContent'); if(!c) return;
+      if(document.getElementById('prevRelatoriosFooter')) return; // já injetado
+      var section = document.createElement('div');
+      section.className = 'card';
+      section.id = 'prevRelatoriosFooter';
+      section.style.cssText = 'margin-bottom:18px;';
+      section.innerHTML =
+        '<div class="sec-header" style="margin-top:0;"><span class="sec-title">📊 Relatórios de Previsões</span><div class="sec-line"></div></div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;">'+
+          '<div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes(\'relPrevisaoRealizado\')"><div style="font-size:26px;margin-bottom:8px;">📅</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Previsão vs Realizado</div><div style="font-size:11px;color:var(--text3);">Compare metas com gastos reais</div></div>'+
+          '<div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes(\'relPrevistoRealizadoNexus\')"><div style="font-size:26px;margin-bottom:8px;">📐</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Comparativo Previsto x Realizado</div><div style="font-size:11px;color:var(--text3);">Por categoria · Onde estourou</div></div>'+
+          '<div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes(\'relReceitasPrevistas\')"><div style="font-size:26px;margin-bottom:8px;">📈</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Receitas Previstas</div><div style="font-size:11px;color:var(--text3);">Planejadas por mês</div></div>'+
+          '<div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes(\'relReceitasRealizadas\')"><div style="font-size:26px;margin-bottom:8px;">📊</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Receitas Realizadas</div><div style="font-size:11px;color:var(--text3);">Efetivamente recebidas</div></div>'+
+          '<div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes(\'relDespesasPrevistas\')"><div style="font-size:26px;margin-bottom:8px;">📉</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Despesas Previstas</div><div style="font-size:11px;color:var(--text3);">Planejadas por categoria</div></div>'+
+          '<div class="card" style="cursor:pointer;" onclick="abrirRelatorioDePrevisoes(\'relDespesasRealizadas\')"><div style="font-size:26px;margin-bottom:8px;">💳</div><div style="font-weight:700;font-size:13px;margin-bottom:4px;">Despesas Realizadas</div><div style="font-size:11px;color:var(--text3);">Saídas registradas em Contas</div></div>'+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--text3);margin-top:10px;">Abrir um relatório leva você até o módulo Relatórios, sem esconder as demais seções de Previsões — você pode voltar a qualquer momento.</div>';
+      c.appendChild(section);
+    }, 250);
+  };
+
+  window.abrirRelatorioDePrevisoes = function(fnName){
+    navigateTo('relatorios');
+    setTimeout(function(){ if(typeof window[fnName]==='function') window[fnName](); }, 350);
   };
 
   // =============================================================
@@ -15948,7 +16017,7 @@ async function _cdbControlRestoreFromBackup(cdbData){
     var c = document.getElementById('relContent'); if(!c) return;
     var a = new Date().getFullYear(), m = new Date().getMonth()+1;
     c.innerHTML = '<div class="adv-report-card">'+
-      '<div class="adv-report-title">💳 Despesas Realizadas (A Pagar + Contas)</div>'+
+      '<div class="adv-report-title">💳 Despesas Realizadas (Saídas — Módulo Contas)</div>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
         '<div><label>De</label><input type="date" id="rdrIni" value="'+a+'-'+pad2(m)+'-01" style="width:148px;"></div>'+
         '<div><label>Até</label><input type="date" id="rdrFim" value="'+a+'-'+pad2(m)+'-'+pad2(new Date(a,m,0).getDate())+'" style="width:148px;"></div>'+
@@ -15965,20 +16034,19 @@ async function _cdbControlRestoreFromBackup(cdbData){
     var el = document.getElementById('rdrResult'); if(!el) return;
     var ini = document.getElementById('rdrIni')?.value||'', fim = document.getElementById('rdrFim')?.value||'', tipo = document.getElementById('rdrTipo')?.value||'';
 
-    // Fontes: movimentações DESPESA (sem pagarId) + A Pagar PAGO (sem movimentação vinculada)
+    // CORREÇÃO CRÍTICA (§17 da auditoria): DESPESAS REALIZADAS deve usar
+    // EXCLUSIVAMENTE saídas efetivamente registradas no módulo CONTAS
+    // (DATA.movimentacoes, tipoOp==='DESPESA'). A versão anterior somava
+    // também DATA.pagar com status PAGO ("A Pagar + Contas"), tratando uma
+    // conta paga como se fosse automaticamente realizada — isso é proibido
+    // pela regra do sistema (REALIZADO ≠ A PAGAR). Toda baixa em A Pagar já
+    // gera uma movimentação em CONTAS (com pagarId), então essa é a única
+    // fonte necessária — sem risco de faltar dados nem de duplicar.
     var itens = [];
     (DATA.movimentacoes||[]).forEach(function(x){
-      if(x.tipoOp!=='DESPESA'||x.status==='ANULADO'||(x.tipo==='Transferência')||x.pagarId) return;
+      if(x.tipoOp!=='DESPESA'||x.status==='ANULADO'||(x.tipo==='Transferência')) return;
       if((!ini||x.data>=ini)&&(!fim||x.data<=fim)&&(!tipo||x.tipo===tipo))
         itens.push({data:x.data||'',descricao:x.descricao||'',tipo:x.tipo||'',valor:x.valor||0,fonte:'Contas'});
-    });
-    (DATA.pagar||[]).forEach(function(p){
-      if(p.status!=='PAGO') return;
-      var dt = p.dataPagamento||p.vencimento||'';
-      if((!ini||dt>=ini)&&(!fim||dt<=fim)&&(!tipo||p.tipo===tipo)){
-        var temMov = (DATA.movimentacoes||[]).some(function(x){ return x.pagarId===p.id&&x.tipoOp==='DESPESA'&&x.status!=='ANULADO'; });
-        if(!temMov) itens.push({data:dt,descricao:p.descricao||p.titulo||'',tipo:p.tipo||'',valor:p.valor||0,fonte:'A Pagar'});
-      }
     });
     itens.sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
 
@@ -15993,19 +16061,12 @@ async function _cdbControlRestoreFromBackup(cdbData){
   };
   window.pdfRelDespesasRealizadas = function(){
     var ini = document.getElementById('rdrIni')?.value||'', fim = document.getElementById('rdrFim')?.value||'', tipo = document.getElementById('rdrTipo')?.value||'';
+    // CORREÇÃO CRÍTICA (§17): mesma regra do execRelDespesasRealizadas — somente CONTAS.
     var itens = [];
     (DATA.movimentacoes||[]).forEach(function(x){
-      if(x.tipoOp!=='DESPESA'||x.status==='ANULADO'||x.pagarId) return;
+      if(x.tipoOp!=='DESPESA'||x.status==='ANULADO'||(x.tipo==='Transferência')) return;
       if((!ini||x.data>=ini)&&(!fim||x.data<=fim)&&(!tipo||x.tipo===tipo))
         itens.push({data:x.data||'',descricao:x.descricao||'',tipo:x.tipo||'',valor:x.valor||0,fonte:'Contas'});
-    });
-    (DATA.pagar||[]).forEach(function(p){
-      if(p.status!=='PAGO') return;
-      var dt = p.dataPagamento||p.vencimento||'';
-      if((!ini||dt>=ini)&&(!fim||dt<=fim)&&(!tipo||p.tipo===tipo)){
-        var temMov = (DATA.movimentacoes||[]).some(function(x){ return x.pagarId===p.id&&x.tipoOp==='DESPESA'&&x.status!=='ANULADO'; });
-        if(!temMov) itens.push({data:dt,descricao:p.descricao||p.titulo||'',tipo:p.tipo||'',valor:p.valor||0,fonte:'A Pagar'});
-      }
     });
     itens.sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
     if(!itens.length){ showToast('Nenhum dado para gerar PDF','var(--amber)'); return; }
@@ -16042,7 +16103,7 @@ async function _cdbControlRestoreFromBackup(cdbData){
           _relCard('📈','Receitas Previstas','Receitas planejadas por mês','relReceitasPrevistas()')+
           _relCard('📊','Receitas Realizadas','Receitas efetivamente recebidas','relReceitasRealizadas()')+
           _relCard('📉','Despesas Previstas','Despesas planejadas por categoria','relDespesasPrevistas()')+
-          _relCard('💳','Despesas Realizadas','A Pagar + Contas consolidados','relDespesasRealizadas()')+
+          _relCard('💳','Despesas Realizadas','Saídas efetivamente registradas em Contas','relDespesasRealizadas()')+
         '</div>';
       c.appendChild(section);
     }, 300);
@@ -16058,6 +16119,114 @@ async function _cdbControlRestoreFromBackup(cdbData){
   }
 
   console.log('✓ NEXUS ONE — Previsões: totais + gráfico + remoção consolidado + Relatórios de Previsões carregados.');
+})();
+</script>
+
+<!-- ============================================================
+  NEXUS ONE — §12/§21: ORGANIZAÇÃO VISUAL POR TEMA (aditiva)
+  Reorganiza os cards já existentes em #relGrid (Relatórios) e
+  acrescenta cabeçalhos de seção no módulo Previsões, sem alterar
+  nenhuma função, cálculo, onclick ou dado — apenas DOM/CSS por
+  cima do que já é renderizado pelas versões anteriores.
+  ============================================================ -->
+<script>
+(function nexusOrganizacaoPorTema(){
+
+  // ---- §12: agrupar os cards de #relGrid por tema ----
+  var GRUPOS_RELATORIOS = [
+    { titulo:'💸 Despesas', chaves:['Despesas por Tipo','Participação das Despesas','Despesas por Subtipo','Comparativo Previsto x Realizado','Contas a Pagar por Categoria','Previsão vs Realizado'] },
+    { titulo:'💰 Receitas / Contas', chaves:['Contas por Mês','Saldos das Contas','Contas a Pagar por Período'] },
+    { titulo:'📈 Fluxo e Projeções', chaves:['Fluxo de Caixa Diário','Previsão de Saldo','Evolução do Patrimônio'] },
+    { titulo:'🔍 Análises', chaves:['Movimentação por Tipo','Movimentação por Subtipo','Simulador de Compras'] }
+  ];
+
+  function _tituloCard(card){
+    // Título fica no primeiro elemento com font-weight 700 (padrão usado
+    // em todas as versões de cards deste módulo) ou em .card-label.
+    var el = card.querySelector('.card-label') || card.querySelector('[style*="font-weight:700"]');
+    return el ? el.textContent.trim() : card.textContent.trim();
+  }
+
+  function organizarRelGrid(){
+    var rg = document.getElementById('relGrid');
+    if(!rg) return;
+    var cards = Array.prototype.slice.call(rg.children).filter(function(el){ return el.classList.contains('card'); });
+    // Se já não há cards soltos como filhos diretos (já foram agrupados
+    // em uma passada anterior), não há nada a fazer — operação idempotente.
+    if(!cards.length) return;
+
+    var usados = [];
+    var blocos = GRUPOS_RELATORIOS.map(function(grupo){
+      var achados = cards.filter(function(card){
+        if(usados.indexOf(card)>-1) return false;
+        var t = _tituloCard(card);
+        return grupo.chaves.some(function(chave){ return t.indexOf(chave)>-1; });
+      });
+      achados.forEach(function(c){ usados.push(c); });
+      return { titulo:grupo.titulo, cards:achados };
+    });
+    var restantes = cards.filter(function(c){ return usados.indexOf(c)===-1; });
+    if(restantes.length) blocos.push({ titulo:'📋 Outros Relatórios', cards:restantes });
+
+    var frag = document.createDocumentFragment();
+    blocos.forEach(function(bloco){
+      if(!bloco.cards.length) return;
+      var secTitle = document.createElement('div');
+      secTitle.className = 'sec-header';
+      secTitle.style.cssText = 'margin:18px 0 10px 0;grid-column:1/-1;';
+      secTitle.innerHTML = '<span class="sec-title">'+bloco.titulo+'</span><div class="sec-line"></div>';
+      frag.appendChild(secTitle);
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;grid-column:1/-1;margin-bottom:6px;';
+      bloco.cards.forEach(function(c){ wrap.appendChild(c); });
+      frag.appendChild(wrap);
+    });
+    rg.innerHTML = '';
+    rg.appendChild(frag);
+  }
+
+  var _origRenderRelatoriosOrg = window.renderRelatorios;
+  window.renderRelatorios = function(){
+    _origRenderRelatoriosOrg.apply(this, arguments);
+    // Roda por último, depois de todos os outros patches que ainda
+    // acrescentam cards ao grid (os mais lentos usam até 220ms).
+    setTimeout(organizarRelGrid, 400);
+  };
+
+  // ---- §21: cabeçalhos de seção no módulo Previsões (RESUMO / EDIÇÃO / RELATÓRIOS) ----
+  function organizarPrevisoesContent(){
+    var c = document.getElementById('previsoesContent');
+    if(!c) return;
+    var cardTop = c.querySelector('.prev-card-top');
+    var edicaoCard = Array.prototype.slice.call(c.querySelectorAll('.card')).find(function(card){
+      var h = card.querySelector('.sec-title');
+      return h && h.textContent.indexOf('Editar Previsões')>-1;
+    });
+    var relatoriosFooter = document.getElementById('prevRelatoriosFooter');
+
+    function inserirRotulo(refEl, texto){
+      if(!refEl || !refEl.parentNode) return;
+      if(refEl.previousElementSibling && refEl.previousElementSibling.classList && refEl.previousElementSibling.classList.contains('nexus-prev-group-label')) return;
+      var lbl = document.createElement('div');
+      lbl.className = 'nexus-prev-group-label';
+      lbl.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);font-weight:700;margin:14px 0 6px 2px;';
+      lbl.textContent = texto;
+      refEl.parentNode.insertBefore(lbl, refEl);
+    }
+
+    if(cardTop) inserirRotulo(cardTop, '📌 Resumo');
+    if(edicaoCard) inserirRotulo(edicaoCard, '📝 Cadastro e Edição');
+    if(relatoriosFooter) inserirRotulo(relatoriosFooter, '📊 Relatórios');
+
+  }
+
+  var _origRenderPrevisoesOrg = window.renderPrevisoes;
+  window.renderPrevisoes = function(){
+    _origRenderPrevisoesOrg.apply(this, arguments);
+    setTimeout(organizarPrevisoesContent, 320);
+  };
+
+  console.log('✓ NEXUS ONE — §12/§21: organização visual por tema aplicada (Relatórios agrupados + rótulos em Previsões).');
 })();
 </script>
 </body>
