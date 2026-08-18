@@ -6088,7 +6088,8 @@ function darBaixaPagar(id){
     DATA.movimentacoes.push({
       id:genId('MOV'),contaId:document.getElementById('bxConta').value,
       tipoOp:'DESPESA',data:p.dataPagamento,descricao:'Pgto: '+(p.descricao||''),
-      tipo:p.tipo||'Pagamento',subtipo:p.subtipo||'',valor:p.valorPago,status:'ATIVO',criadoEm:new Date().toISOString()
+      tipo:p.tipo||'Pagamento',subtipo:p.subtipo||'',valor:p.valorPago,status:'ATIVO',criadoEm:new Date().toISOString(),
+      pagarId:p.id
     });
     save(true); renderPagar(); checkAlerts(); toast('✅ Baixa registrada'); closeAllModals();
   });
@@ -13402,7 +13403,8 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
         DATA.movimentacoes.push({
           id: genId('MOV'), contaId: contaId, tipoOp:'DESPESA', data: dt,
           descricao: 'Pgto: '+(p.descricao||''), tipo: p.tipo||'Pagamento', subtipo: p.subtipo||'',
-          valor: p.valor, status:'ATIVO', criadoEm: new Date().toISOString()
+          valor: p.valor, status:'ATIVO', criadoEm: new Date().toISOString(),
+          pagarId: p.id
         });
       });
       save(true); renderPagar(); checkAlerts();
@@ -15548,14 +15550,33 @@ async function _cdbControlRestoreFromBackup(cdbData){
   // =============================================================
   // REALIZADO: movimentacoes (DESPESA) + pagar (PAGO) + contas (saídas)
   // SEM duplicidade: cada fonte usa critério exclusivo.
+  //
+  // IMPORTANTE (correção de duplicidade): ao dar baixa em uma conta a
+  // pagar, o sistema também cria uma movimentação em Contas — mas esse
+  // vínculo (pagarId) só passou a ser gravado agora. Baixas feitas ANTES
+  // desta correção não têm pagarId, então usamos aqui um critério extra
+  // (heurístico) para reconhecer essas baixas antigas também: mesma data
+  // de pagamento, mesmo valor e descrição no padrão "Pgto: <descrição>" —
+  // e assim evitar contar o mesmo pagamento duas vezes mesmo em dados já
+  // existentes, sem precisar mexer em nada manualmente.
   // =============================================================
+  function _movimentacaoRefereABaixa(x, p){
+    if(x.pagarId===p.id) return true; // baixas novas (com vínculo direto)
+    if(x.pagarId) return false; // já está vinculada a OUTRA conta, não é esta
+    // Baixas antigas (sem pagarId): reconhece pelo padrão de descrição + valor + data
+    var descEsperada = 'Pgto: '+(p.descricao||'');
+    var dtPag = p.dataPagamento || p.vencimento || '';
+    return x.descricao===descEsperada && x.data===dtPag && Math.abs((x.valor||0)-(p.valorPago!=null?p.valorPago:p.valor))<0.01;
+  }
   function realizadoCompleto(mesAno, tipoNome){
     var total = 0;
     // 1) Movimentações DESPESA ativas neste mês/tipo
     (DATA.movimentacoes||[]).forEach(function(x){
       if(x.tipoOp==='DESPESA' && x.status!=='ANULADO' && (x.data||'').slice(0,7)===mesAno && (!tipoNome||x.tipo===tipoNome)){
-        // Evita duplicar se foi gerado por baixa de A Pagar (tem pagarId)
-        if(!x.pagarId) total += (x.valor||0);
+        // Evita duplicar se foi gerada por uma baixa de A Pagar (vínculo
+        // direto via pagarId, ou reconhecida pelo padrão de baixas antigas)
+        var vemDeBaixa = x.pagarId ? true : (DATA.pagar||[]).some(function(p){ return _movimentacaoRefereABaixa(x,p); });
+        if(!vemDeBaixa) total += (x.valor||0);
       }
     });
     // 2) A Pagar com status PAGO neste mês/tipo (que NÃO geraram movimentação)
@@ -15563,9 +15584,10 @@ async function _cdbControlRestoreFromBackup(cdbData){
       if(p.status==='PAGO' && (!tipoNome||p.tipo===tipoNome)){
         var dtPagamento = p.dataPagamento || p.vencimento || '';
         if(dtPagamento.slice(0,7)===mesAno){
-          // Só conta se não há movimentação com pagarId apontando pra este registro
+          // Só conta se não há nenhuma movimentação (nova ou antiga) que já
+          // represente esta mesma baixa
           var temMov = (DATA.movimentacoes||[]).some(function(x){
-            return x.pagarId===p.id && x.tipoOp==='DESPESA' && x.status!=='ANULADO';
+            return x.tipoOp==='DESPESA' && x.status!=='ANULADO' && _movimentacaoRefereABaixa(x,p);
           });
           if(!temMov) total += (p.valor||0);
         }
