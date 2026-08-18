@@ -15531,5 +15531,510 @@ async function _cdbControlRestoreFromBackup(cdbData){
   console.log('✓ CDB Control — Sincronização com Supabase e Backup JSON ativada.');
 })();
 </script>
+<script>
+// ================================================================
+// NEXUS ONE — Ajustes módulo PREVISÕES + RELATÓRIOS DE PREVISÕES
+// ================================================================
+(function nexusPrevisoesRelatorios(){
+  'use strict';
+
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function fmtMoney(v){ return 'R$ '+(Math.round((v||0)*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function mesAnoAtual(){ var d=new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1); }
+
+  // =============================================================
+  // REALIZADO: movimentacoes (DESPESA) + pagar (PAGO) + contas (saídas)
+  // SEM duplicidade: cada fonte usa critério exclusivo.
+  // =============================================================
+  function realizadoCompleto(mesAno, tipoNome){
+    var total = 0;
+    // 1) Movimentações DESPESA ativas neste mês/tipo
+    (DATA.movimentacoes||[]).forEach(function(x){
+      if(x.tipoOp==='DESPESA' && x.status!=='ANULADO' && (x.data||'').slice(0,7)===mesAno && (!tipoNome||x.tipo===tipoNome)){
+        // Evita duplicar se foi gerado por baixa de A Pagar (tem pagarId)
+        if(!x.pagarId) total += (x.valor||0);
+      }
+    });
+    // 2) A Pagar com status PAGO neste mês/tipo (que NÃO geraram movimentação)
+    (DATA.pagar||[]).forEach(function(p){
+      if(p.status==='PAGO' && (!tipoNome||p.tipo===tipoNome)){
+        var dtPagamento = p.dataPagamento || p.vencimento || '';
+        if(dtPagamento.slice(0,7)===mesAno){
+          // Só conta se não há movimentação com pagarId apontando pra este registro
+          var temMov = (DATA.movimentacoes||[]).some(function(x){
+            return x.pagarId===p.id && x.tipoOp==='DESPESA' && x.status!=='ANULADO';
+          });
+          if(!temMov) total += (p.valor||0);
+        }
+      }
+    });
+    return Math.round(total*100)/100;
+  }
+
+  // Receita realizada do mês (movimentações RECEITA)
+  function receitaRealizada(mesAno){
+    return (DATA.movimentacoes||[]).filter(function(x){
+      return x.tipoOp==='RECEITA' && x.status!=='ANULADO' && (x.data||'').slice(0,7)===mesAno && x.tipo!=='Transferência';
+    }).reduce(function(s,x){ return s+(x.valor||0); },0);
+  }
+
+  // Receita prevista do mês
+  function receitaPrevista(mesAno){
+    var r = (DATA.receitasPrevistas||[]).find(function(x){ return x.mesAno===mesAno; });
+    if(!r) return 0;
+    if(Array.isArray(r.fontes) && r.fontes.length){
+      return r.fontes.reduce(function(s,f){ return s+(parseFloat(f.valor)||0); },0);
+    }
+    return r.valor||0;
+  }
+
+  // Despesas previstas do mês (soma das previsões por categoria)
+  function despesasPrevistas(mesAno){
+    return (DATA.previsoes||[]).filter(function(p){ return p.mesAno===mesAno; })
+      .reduce(function(s,p){ return s+(p.valorPrevisto||0); },0);
+  }
+
+  // =============================================================
+  // PATCH em n9ResumoPrev: adicionar TOTAL na coluna Realizado
+  // + gráfico de despesas (substitui "Consolidado por mês e categoria")
+  // =============================================================
+  var _origN9ResumoPrev = window.n9ResumoPrev;
+  window.n9ResumoPrev = function(key){
+    // Chama o original primeiro para renderizar a tabela
+    if(typeof _origN9ResumoPrev === 'function') _origN9ResumoPrev.apply(this, arguments);
+
+    var el = document.getElementById('prevResumoV9');
+    if(!el) return;
+
+    // Recalcula dados com a fonte correta (A Pagar + Contas)
+    var tipos = (DATA.tipos||[]).filter(function(t){ return t.classificacao==='DESPESA'; });
+    var totalPrevisto = 0, totalRealizado = 0;
+    var rows = '';
+    tipos.forEach(function(t){
+      var p = (DATA.previsoes||[]).find(function(x){ return x.mesAno===key && x.tipo===t.nome; });
+      var prev = p ? (p.valorPrevisto||0) : 0;
+      var real = realizadoCompleto(key, t.nome);
+      var diff = prev - real;
+      if(prev===0 && real===0) return; // oculta categorias sem dados
+      totalPrevisto += prev;
+      totalRealizado += real;
+      var diffColor = diff>=0 ? 'var(--emerald)' : 'var(--coral)';
+      rows += '<tr>'+
+        '<td>'+escHtml(t.nome)+'</td>'+
+        '<td class="mono c-amber" style="text-align:right;">'+fmtMoney(prev)+'</td>'+
+        '<td class="mono c-coral" style="text-align:right;">'+fmtMoney(real)+'</td>'+
+        '<td class="mono" style="text-align:right;color:'+diffColor+';">'+fmtMoney(diff)+'</td>'+
+      '</tr>';
+    });
+
+    // Card resumo
+    var cardReceita = fmtMoney(receitaPrevista(key));
+    var recReal = fmtMoney(receitaRealizada(key));
+
+    el.innerHTML =
+      // Cards topo
+      '<div class="n9grid" style="margin-bottom:16px;">'+
+        '<div class="n9metric"><div class="n9lbl">Total geral previsto</div><div class="n9val c-sky">'+fmtMoney(despesasPrevistas(key))+'</div></div>'+
+        '<div class="n9metric"><div class="n9lbl">Receita prevista</div><div class="n9val c-emerald">'+cardReceita+'</div></div>'+
+        '<div class="n9metric"><div class="n9lbl">Receita realizada</div><div class="n9val c-sky">'+recReal+'</div></div>'+
+      '</div>'+
+      // Tabela categorias com totais
+      '<div class="table-wrap" style="margin-bottom:14px;"><table>'+
+        '<tr><th>Categoria</th><th style="text-align:right;">Subtotal previsto</th><th style="text-align:right;">Realizado</th><th style="text-align:right;">Diferença</th></tr>'+
+        rows+
+        '<tr class="tr-totais">'+
+          '<td><strong>Total</strong></td>'+
+          '<td class="mono c-amber" style="text-align:right;"><strong>'+fmtMoney(totalPrevisto)+'</strong></td>'+
+          '<td class="mono c-coral" style="text-align:right;"><strong>'+fmtMoney(totalRealizado)+'</strong></td>'+
+          '<td class="mono" style="text-align:right;color:'+(totalPrevisto>=totalRealizado?'var(--emerald)':'var(--coral)')+';">'+
+            '<strong>'+fmtMoney(totalPrevisto-totalRealizado)+'</strong>'+
+          '</td>'+
+        '</tr>'+
+      '</table></div>'+
+      // Gráfico de Despesas Previstas x Realizadas (Chart.js)
+      '<div class="card" style="margin-top:14px;"><div class="sec-header" style="margin-top:0;">'+
+        '<span class="sec-title">📊 Despesas Previstas × Realizadas</span><div class="sec-line"></div>'+
+      '</div>'+
+      '<div style="position:relative;height:180px;"><canvas id="prevDesp_Grafico"></canvas></div></div>';
+
+    // Desenha o gráfico após DOM atualizar
+    setTimeout(function(){ _desenharGraficoDespesas(key); }, 80);
+  };
+
+  function _desenharGraficoDespesas(key){
+    var canvas = document.getElementById('prevDesp_Grafico');
+    if(!canvas || typeof Chart==='undefined') return;
+    if(canvas._chartInst){ canvas._chartInst.destroy(); }
+    var tipos = (DATA.tipos||[]).filter(function(t){ return t.classificacao==='DESPESA'; });
+    var labels=[], previstas=[], realizadas=[];
+    tipos.forEach(function(t){
+      var p = (DATA.previsoes||[]).find(function(x){ return x.mesAno===key && x.tipo===t.nome; });
+      var prev = p ? (p.valorPrevisto||0) : 0;
+      var real = realizadoCompleto(key, t.nome);
+      if(prev===0 && real===0) return;
+      labels.push(t.nome);
+      previstas.push(prev);
+      realizadas.push(real);
+    });
+    canvas._chartInst = new Chart(canvas,{
+      type:'bar',
+      data:{
+        labels:labels,
+        datasets:[
+          {label:'Previsto',data:previstas,backgroundColor:'rgba(255,185,50,.5)',borderColor:'rgba(255,185,50,.9)',borderRadius:5,borderWidth:1.5},
+          {label:'Realizado',data:realizadas,backgroundColor:'rgba(239,91,91,.4)',borderColor:'rgba(239,91,91,.85)',borderRadius:5,borderWidth:1.5}
+        ]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        plugins:{
+          legend:{labels:{color:'#6a7a9e',font:{size:10},boxWidth:12}},
+          tooltip:{callbacks:{label:function(ctx){ return ' '+ctx.dataset.label+': '+fmtMoney(ctx.parsed.y); }}}
+        },
+        scales:{
+          x:{ticks:{color:'#2e3d60',font:{size:9},maxRotation:35},grid:{color:'rgba(26,34,64,.3)'}},
+          y:{ticks:{color:'#2e3d60',font:{size:9},callback:function(v){ return 'R$'+v.toLocaleString('pt-BR'); }},grid:{color:'rgba(26,34,64,.3)'}}
+        }
+      }
+    });
+  }
+
+  // =============================================================
+  // REMOVER "Consolidado por mês e categoria" do renderPrevisoes
+  // =============================================================
+  var _origRPFinal = window.renderPrevisoes;
+  window.renderPrevisoes = function(){
+    _origRPFinal.apply(this, arguments);
+    // Remove a seção "Consolidado por mês e categoria"
+    setTimeout(function(){
+      var c = document.getElementById('previsoesContent'); if(!c) return;
+      c.querySelectorAll('.card').forEach(function(card){
+        var header = card.querySelector('.sec-title');
+        if(header && header.textContent.toLowerCase().indexOf('consolidado')>-1){
+          card.remove();
+        }
+      });
+      // Garante que o n9ResumoPrev atualiza com os dados corretos
+      var key = document.getElementById('prevMesEdit')?.value || document.getElementById('prevFiltroMes')?.value || mesAnoAtual();
+      if(typeof window.n9ResumoPrev==='function') window.n9ResumoPrev(key);
+    }, 200);
+  };
+
+  // =============================================================
+  // RELATÓRIOS DE PREVISÕES
+  // =============================================================
+
+  // ---- Utilitário: gerar HTML de PDF e abrir janela ----
+  function abrirJanelaPDF(titulo, subtitulo, filtros, tableHtml, totalHtml){
+    var agora = new Date();
+    var dtGeracao = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR');
+    var win = window.open('','_blank');
+    if(!win){ showToast('Bloqueio de popup detectado. Permita popups para gerar o PDF.','var(--amber)'); return; }
+    win.document.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>'+escHtml(titulo)+'</title>'+
+      '<style>*{box-sizing:border-box;}body{font-family:Arial,Helvetica,sans-serif;color:#1b2436;padding:24px;margin:0;}'+
+      '.pdf-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f3d3e;padding-bottom:10px;margin-bottom:16px;}'+
+      '.pdf-header h1{font-size:15px;margin:0 0 3px 0;color:#0f3d3e;}'+
+      '.pdf-header h2{font-size:12px;font-weight:600;margin:0;color:#333;}'+
+      '.pdf-meta{font-size:10px;color:#666;text-align:right;}'+
+      '.pdf-filtros{font-size:11.5px;color:#555;margin-bottom:14px;}'+
+      'table{width:100%;border-collapse:collapse;font-size:11.5px;}'+
+      'th,td{border:1px solid #ccc;padding:5px 7px;}'+
+      'th{background:#0f3d3e;color:#fff;text-transform:uppercase;font-size:10px;letter-spacing:.4px;}'+
+      'tbody tr:nth-child(even){background:#f4f6fb;}'+
+      'tfoot td{background:#eef3ee;border-top:2px solid #0f3d3e;font-weight:700;}'+
+      '.pdf-footer{margin-top:16px;font-size:10.5px;color:#666;border-top:1px solid #ccc;padding-top:7px;display:flex;justify-content:space-between;}'+
+      '@page{margin:14mm;}@media print{body{padding:0;}}'+
+      '</style></head><body>'+
+      '<div class="pdf-header"><div><h1>NEXUS ONE — Sistema Financeiro Pro</h1><h2>'+escHtml(titulo)+'</h2>'+
+        (subtitulo?'<div style="font-size:11px;color:#555;margin-top:2px;">'+escHtml(subtitulo)+'</div>':'')+
+      '</div><div class="pdf-meta">Gerado em: '+dtGeracao+'</div></div>'+
+      (filtros?'<div class="pdf-filtros"><strong>Filtros aplicados:</strong> '+filtros+'</div>':'')+
+      tableHtml+
+      (totalHtml?totalHtml:'')+
+      '<div class="pdf-footer"><span>NEXUS ONE · Documento gerado automaticamente</span><span>'+dtGeracao+'</span></div>'+
+      '<'+'script>window.onload=function(){window.print();};</'+'script>'+
+      '</body></html>');
+    win.document.close();
+  }
+
+  // ---- Obter meses disponíveis de previsões ----
+  function mesesComPrevisao(){
+    var set = new Set();
+    (DATA.previsoes||[]).forEach(function(p){ if(p.mesAno) set.add(p.mesAno); });
+    (DATA.receitasPrevistas||[]).forEach(function(r){ if(r.mesAno) set.add(r.mesAno); });
+    return Array.from(set).sort().reverse();
+  }
+  function tiposDespesa(){ return (DATA.tipos||[]).filter(function(t){ return t.classificacao==='DESPESA'; }); }
+  function tiposReceita(){ return (DATA.tipos||[]).filter(function(t){ return t.classificacao==='RECEITA'; }); }
+
+  // ---- Relatório: Receitas Previstas ----
+  window.relReceitasPrevistas = function(){
+    var c = document.getElementById('relContent'); if(!c) return;
+    var meses = mesesComPrevisao();
+    var optMeses = '<option value="">Todos os meses</option>'+meses.map(function(m){ return '<option value="'+m+'">'+m+'</option>'; }).join('');
+    c.innerHTML = '<div class="adv-report-card">'+
+      '<div class="adv-report-title">📈 Receitas Previstas</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
+        '<div><label>Mês</label><select id="rrpMes">'+optMeses+'</select></div>'+
+        '<button class="btn btn-sm btn-primary" onclick="execRelReceitasPrevistas()">🔍 Gerar</button>'+
+        '<button class="btn btn-sm" onclick="pdfRelReceitasPrevistas()">📄 Gerar PDF</button>'+
+      '</div><div id="rrpResult"></div></div>';
+    c.scrollIntoView({behavior:'smooth'});
+    setTimeout(window.execRelReceitasPrevistas, 80);
+  };
+  window.execRelReceitasPrevistas = function(){
+    var el = document.getElementById('rrpResult'); if(!el) return;
+    var mesFiltro = document.getElementById('rrpMes')?.value || '';
+    var lista = (DATA.receitasPrevistas||[]).filter(function(r){ return !mesFiltro || r.mesAno===mesFiltro; })
+      .sort(function(a,b){ return (a.mesAno||'').localeCompare(b.mesAno||''); });
+    if(!lista.length){ el.innerHTML='<div class="empty"><div class="empty-title">Nenhuma receita prevista encontrada</div></div>'; return; }
+    var total = 0;
+    var h = '<div class="table-wrap"><table><thead><tr><th>Mês</th><th style="text-align:right;">Valor Previsto</th><th>Fontes</th></tr></thead><tbody>';
+    lista.forEach(function(r){
+      var val = r.valor||0;
+      if(Array.isArray(r.fontes)&&r.fontes.length) val = r.fontes.reduce(function(s,f){ return s+(parseFloat(f.valor)||0); },0);
+      total += val;
+      var fontes = Array.isArray(r.fontes)&&r.fontes.length ? r.fontes.map(function(f){ return escHtml(f.nome||'')+'='+fmtMoney(f.valor||0); }).join(', ') : '—';
+      h += '<tr><td>'+escHtml(r.mesAno)+'</td><td class="mono" style="text-align:right;">'+fmtMoney(val)+'</td><td style="font-size:12px;">'+fontes+'</td></tr>';
+    });
+    h += '</tbody><tfoot><tr><td><strong>TOTAL</strong></td><td class="mono" style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td><td></td></tr></tfoot></table></div>';
+    el.innerHTML = h;
+  };
+  window.pdfRelReceitasPrevistas = function(){
+    var mesFiltro = document.getElementById('rrpMes')?.value || '';
+    var lista = (DATA.receitasPrevistas||[]).filter(function(r){ return !mesFiltro || r.mesAno===mesFiltro; })
+      .sort(function(a,b){ return (a.mesAno||'').localeCompare(b.mesAno||''); });
+    if(!lista.length){ showToast('Nenhum dado para gerar PDF','var(--amber)'); return; }
+    var total = 0;
+    var rows = lista.map(function(r){
+      var val = r.valor||0;
+      if(Array.isArray(r.fontes)&&r.fontes.length) val = r.fontes.reduce(function(s,f){ return s+(parseFloat(f.valor)||0); },0);
+      total += val;
+      return '<tr><td>'+escHtml(r.mesAno)+'</td><td style="text-align:right;">'+fmtMoney(val)+'</td></tr>';
+    }).join('');
+    var tableHtml = '<table><thead><tr><th>Mês</th><th style="text-align:right;">Valor Previsto</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    var totalHtml = '<table style="margin-top:4px;"><tfoot><tr><td><strong>TOTAL</strong></td><td style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table>';
+    abrirJanelaPDF('Receitas Previstas', mesFiltro?'Período: '+mesFiltro:'Todos os meses', mesFiltro?'Mês: '+mesFiltro:'Todos os meses', tableHtml, totalHtml);
+  };
+
+  // ---- Relatório: Receitas Realizadas ----
+  window.relReceitasRealizadas = function(){
+    var c = document.getElementById('relContent'); if(!c) return;
+    var a = new Date().getFullYear(), m = new Date().getMonth()+1;
+    c.innerHTML = '<div class="adv-report-card">'+
+      '<div class="adv-report-title">📊 Receitas Realizadas</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
+        '<div><label>De</label><input type="date" id="rrrIni" value="'+a+'-'+pad2(m)+'-01" style="width:148px;"></div>'+
+        '<div><label>Até</label><input type="date" id="rrrFim" value="'+a+'-'+pad2(m)+'-'+pad2(new Date(a,m,0).getDate())+'" style="width:148px;"></div>'+
+        '<div><label>Tipo</label><select id="rrrTipo"><option value="">Todos</option>'+
+          tiposReceita().map(function(t){ return '<option value="'+escHtml(t.nome)+'">'+escHtml(t.nome)+'</option>'; }).join('')+
+        '</select></div>'+
+        '<button class="btn btn-sm btn-primary" onclick="execRelReceitasRealizadas()">🔍 Gerar</button>'+
+        '<button class="btn btn-sm" onclick="pdfRelReceitasRealizadas()">📄 Gerar PDF</button>'+
+      '</div><div id="rrrResult"></div></div>';
+    c.scrollIntoView({behavior:'smooth'});
+    setTimeout(window.execRelReceitasRealizadas, 80);
+  };
+  window.execRelReceitasRealizadas = function(){
+    var el = document.getElementById('rrrResult'); if(!el) return;
+    var ini = document.getElementById('rrrIni')?.value||'', fim = document.getElementById('rrrFim')?.value||'', tipo = document.getElementById('rrrTipo')?.value||'';
+    var lista = (DATA.movimentacoes||[]).filter(function(x){
+      return x.tipoOp==='RECEITA' && x.status!=='ANULADO' && x.tipo!=='Transferência' &&
+        (!ini||x.data>=ini) && (!fim||x.data<=fim) && (!tipo||x.tipo===tipo);
+    }).sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
+    if(!lista.length){ el.innerHTML='<div class="empty"><div class="empty-title">Nenhuma receita realizada encontrada</div></div>'; return; }
+    var total = lista.reduce(function(s,x){ return s+(x.valor||0); },0);
+    var h = '<div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th style="text-align:right;">Valor</th></tr></thead><tbody>';
+    lista.forEach(function(x){
+      h += '<tr><td>'+escHtml(x.data||'')+'</td><td>'+escHtml(x.descricao||'')+'</td><td>'+escHtml(x.tipo||'')+'</td><td class="mono" style="text-align:right;">'+fmtMoney(x.valor||0)+'</td></tr>';
+    });
+    h += '</tbody><tfoot><tr><td colspan="3"><strong>TOTAL</strong></td><td class="mono" style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table></div>';
+    el.innerHTML = h;
+  };
+  window.pdfRelReceitasRealizadas = function(){
+    var ini = document.getElementById('rrrIni')?.value||'', fim = document.getElementById('rrrFim')?.value||'', tipo = document.getElementById('rrrTipo')?.value||'';
+    var lista = (DATA.movimentacoes||[]).filter(function(x){
+      return x.tipoOp==='RECEITA' && x.status!=='ANULADO' && x.tipo!=='Transferência' &&
+        (!ini||x.data>=ini) && (!fim||x.data<=fim) && (!tipo||x.tipo===tipo);
+    }).sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
+    if(!lista.length){ showToast('Nenhum dado para gerar PDF','var(--amber)'); return; }
+    var total = lista.reduce(function(s,x){ return s+(x.valor||0); },0);
+    var rows = lista.map(function(x){
+      return '<tr><td>'+escHtml(x.data||'')+'</td><td>'+escHtml(x.descricao||'')+'</td><td>'+escHtml(x.tipo||'')+'</td><td style="text-align:right;">'+fmtMoney(x.valor||0)+'</td></tr>';
+    }).join('');
+    var tableHtml = '<table><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th style="text-align:right;">Valor</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    var totalHtml = '<table style="margin-top:4px;"><tfoot><tr><td colspan="3"><strong>TOTAL</strong></td><td style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table>';
+    var filtrosTxt = [ini&&'De: '+ini, fim&&'Até: '+fim, tipo&&'Tipo: '+tipo].filter(Boolean).join(' | ') || 'Sem filtros';
+    abrirJanelaPDF('Receitas Realizadas', 'Período: '+(ini||'—')+' a '+(fim||'—'), filtrosTxt, tableHtml, totalHtml);
+  };
+
+  // ---- Relatório: Despesas Previstas ----
+  window.relDespesasPrevistas = function(){
+    var c = document.getElementById('relContent'); if(!c) return;
+    var meses = mesesComPrevisao();
+    var optMeses = '<option value="">Todos os meses</option>'+meses.map(function(m){ return '<option value="'+m+'">'+m+'</option>'; }).join('');
+    c.innerHTML = '<div class="adv-report-card">'+
+      '<div class="adv-report-title">📉 Despesas Previstas</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
+        '<div><label>Mês</label><select id="rdpMes">'+optMeses+'</select></div>'+
+        '<div><label>Categoria</label><select id="rdpTipo"><option value="">Todas</option>'+
+          tiposDespesa().map(function(t){ return '<option value="'+escHtml(t.nome)+'">'+escHtml(t.nome)+'</option>'; }).join('')+
+        '</select></div>'+
+        '<button class="btn btn-sm btn-primary" onclick="execRelDespesasPrevistas()">🔍 Gerar</button>'+
+        '<button class="btn btn-sm" onclick="pdfRelDespesasPrevistas()">📄 Gerar PDF</button>'+
+      '</div><div id="rdpResult"></div></div>';
+    c.scrollIntoView({behavior:'smooth'});
+    setTimeout(window.execRelDespesasPrevistas, 80);
+  };
+  window.execRelDespesasPrevistas = function(){
+    var el = document.getElementById('rdpResult'); if(!el) return;
+    var mesFiltro = document.getElementById('rdpMes')?.value||'', tipoFiltro = document.getElementById('rdpTipo')?.value||'';
+    var lista = (DATA.previsoes||[]).filter(function(p){
+      return (!mesFiltro||p.mesAno===mesFiltro) && (!tipoFiltro||p.tipo===tipoFiltro);
+    }).sort(function(a,b){ return (a.mesAno||'').localeCompare(b.mesAno||'') || (a.tipo||'').localeCompare(b.tipo||''); });
+    if(!lista.length){ el.innerHTML='<div class="empty"><div class="empty-title">Nenhuma despesa prevista encontrada</div></div>'; return; }
+    var total = lista.reduce(function(s,p){ return s+(p.valorPrevisto||0); },0);
+    var h = '<div class="table-wrap"><table><thead><tr><th>Mês</th><th>Categoria</th><th style="text-align:right;">% Receita</th><th style="text-align:right;">Valor Previsto</th></tr></thead><tbody>';
+    lista.forEach(function(p){
+      h += '<tr><td>'+escHtml(p.mesAno||'')+'</td><td>'+escHtml(p.tipo||'')+'</td><td style="text-align:right;">'+(p.percentualReceita!=null?p.percentualReceita.toFixed(1)+'%':'—')+'</td><td class="mono" style="text-align:right;">'+fmtMoney(p.valorPrevisto||0)+'</td></tr>';
+    });
+    h += '</tbody><tfoot><tr><td colspan="3"><strong>TOTAL</strong></td><td class="mono" style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table></div>';
+    el.innerHTML = h;
+  };
+  window.pdfRelDespesasPrevistas = function(){
+    var mesFiltro = document.getElementById('rdpMes')?.value||'', tipoFiltro = document.getElementById('rdpTipo')?.value||'';
+    var lista = (DATA.previsoes||[]).filter(function(p){
+      return (!mesFiltro||p.mesAno===mesFiltro) && (!tipoFiltro||p.tipo===tipoFiltro);
+    }).sort(function(a,b){ return (a.mesAno||'').localeCompare(b.mesAno||'') || (a.tipo||'').localeCompare(b.tipo||''); });
+    if(!lista.length){ showToast('Nenhum dado para gerar PDF','var(--amber)'); return; }
+    var total = lista.reduce(function(s,p){ return s+(p.valorPrevisto||0); },0);
+    var rows = lista.map(function(p){
+      return '<tr><td>'+escHtml(p.mesAno||'')+'</td><td>'+escHtml(p.tipo||'')+'</td><td style="text-align:right;">'+(p.percentualReceita!=null?p.percentualReceita.toFixed(1)+'%':'—')+'</td><td style="text-align:right;">'+fmtMoney(p.valorPrevisto||0)+'</td></tr>';
+    }).join('');
+    var tableHtml = '<table><thead><tr><th>Mês</th><th>Categoria</th><th style="text-align:right;">% Receita</th><th style="text-align:right;">Valor Previsto</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    var totalHtml = '<table style="margin-top:4px;"><tfoot><tr><td colspan="3"><strong>TOTAL</strong></td><td style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table>';
+    var filtrosTxt = [mesFiltro&&'Mês: '+mesFiltro, tipoFiltro&&'Categoria: '+tipoFiltro].filter(Boolean).join(' | ') || 'Sem filtros';
+    abrirJanelaPDF('Despesas Previstas', mesFiltro?'Período: '+mesFiltro:'Todos os meses', filtrosTxt, tableHtml, totalHtml);
+  };
+
+  // ---- Relatório: Despesas Realizadas ----
+  window.relDespesasRealizadas = function(){
+    var c = document.getElementById('relContent'); if(!c) return;
+    var a = new Date().getFullYear(), m = new Date().getMonth()+1;
+    c.innerHTML = '<div class="adv-report-card">'+
+      '<div class="adv-report-title">💳 Despesas Realizadas (A Pagar + Contas)</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">'+
+        '<div><label>De</label><input type="date" id="rdrIni" value="'+a+'-'+pad2(m)+'-01" style="width:148px;"></div>'+
+        '<div><label>Até</label><input type="date" id="rdrFim" value="'+a+'-'+pad2(m)+'-'+pad2(new Date(a,m,0).getDate())+'" style="width:148px;"></div>'+
+        '<div><label>Categoria</label><select id="rdrTipo"><option value="">Todas</option>'+
+          tiposDespesa().map(function(t){ return '<option value="'+escHtml(t.nome)+'">'+escHtml(t.nome)+'</option>'; }).join('')+
+        '</select></div>'+
+        '<button class="btn btn-sm btn-primary" onclick="execRelDespesasRealizadas()">🔍 Gerar</button>'+
+        '<button class="btn btn-sm" onclick="pdfRelDespesasRealizadas()">📄 Gerar PDF</button>'+
+      '</div><div id="rdrResult"></div></div>';
+    c.scrollIntoView({behavior:'smooth'});
+    setTimeout(window.execRelDespesasRealizadas, 80);
+  };
+  window.execRelDespesasRealizadas = function(){
+    var el = document.getElementById('rdrResult'); if(!el) return;
+    var ini = document.getElementById('rdrIni')?.value||'', fim = document.getElementById('rdrFim')?.value||'', tipo = document.getElementById('rdrTipo')?.value||'';
+
+    // Fontes: movimentações DESPESA (sem pagarId) + A Pagar PAGO (sem movimentação vinculada)
+    var itens = [];
+    (DATA.movimentacoes||[]).forEach(function(x){
+      if(x.tipoOp!=='DESPESA'||x.status==='ANULADO'||(x.tipo==='Transferência')||x.pagarId) return;
+      if((!ini||x.data>=ini)&&(!fim||x.data<=fim)&&(!tipo||x.tipo===tipo))
+        itens.push({data:x.data||'',descricao:x.descricao||'',tipo:x.tipo||'',valor:x.valor||0,fonte:'Contas'});
+    });
+    (DATA.pagar||[]).forEach(function(p){
+      if(p.status!=='PAGO') return;
+      var dt = p.dataPagamento||p.vencimento||'';
+      if((!ini||dt>=ini)&&(!fim||dt<=fim)&&(!tipo||p.tipo===tipo)){
+        var temMov = (DATA.movimentacoes||[]).some(function(x){ return x.pagarId===p.id&&x.tipoOp==='DESPESA'&&x.status!=='ANULADO'; });
+        if(!temMov) itens.push({data:dt,descricao:p.descricao||p.titulo||'',tipo:p.tipo||'',valor:p.valor||0,fonte:'A Pagar'});
+      }
+    });
+    itens.sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
+
+    if(!itens.length){ el.innerHTML='<div class="empty"><div class="empty-title">Nenhuma despesa realizada encontrada</div></div>'; return; }
+    var total = itens.reduce(function(s,x){ return s+(x.valor||0); },0);
+    var h = '<div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Fonte</th><th style="text-align:right;">Valor</th></tr></thead><tbody>';
+    itens.forEach(function(x){
+      h += '<tr><td>'+escHtml(x.data)+'</td><td>'+escHtml(x.descricao)+'</td><td>'+escHtml(x.tipo)+'</td><td>'+escHtml(x.fonte)+'</td><td class="mono" style="text-align:right;">'+fmtMoney(x.valor)+'</td></tr>';
+    });
+    h += '</tbody><tfoot><tr><td colspan="4"><strong>TOTAL</strong></td><td class="mono" style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table></div>';
+    el.innerHTML = h;
+  };
+  window.pdfRelDespesasRealizadas = function(){
+    var ini = document.getElementById('rdrIni')?.value||'', fim = document.getElementById('rdrFim')?.value||'', tipo = document.getElementById('rdrTipo')?.value||'';
+    var itens = [];
+    (DATA.movimentacoes||[]).forEach(function(x){
+      if(x.tipoOp!=='DESPESA'||x.status==='ANULADO'||x.pagarId) return;
+      if((!ini||x.data>=ini)&&(!fim||x.data<=fim)&&(!tipo||x.tipo===tipo))
+        itens.push({data:x.data||'',descricao:x.descricao||'',tipo:x.tipo||'',valor:x.valor||0,fonte:'Contas'});
+    });
+    (DATA.pagar||[]).forEach(function(p){
+      if(p.status!=='PAGO') return;
+      var dt = p.dataPagamento||p.vencimento||'';
+      if((!ini||dt>=ini)&&(!fim||dt<=fim)&&(!tipo||p.tipo===tipo)){
+        var temMov = (DATA.movimentacoes||[]).some(function(x){ return x.pagarId===p.id&&x.tipoOp==='DESPESA'&&x.status!=='ANULADO'; });
+        if(!temMov) itens.push({data:dt,descricao:p.descricao||p.titulo||'',tipo:p.tipo||'',valor:p.valor||0,fonte:'A Pagar'});
+      }
+    });
+    itens.sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
+    if(!itens.length){ showToast('Nenhum dado para gerar PDF','var(--amber)'); return; }
+    var total = itens.reduce(function(s,x){ return s+(x.valor||0); },0);
+    var rows = itens.map(function(x){
+      return '<tr><td>'+escHtml(x.data)+'</td><td>'+escHtml(x.descricao)+'</td><td>'+escHtml(x.tipo)+'</td><td>'+escHtml(x.fonte)+'</td><td style="text-align:right;">'+fmtMoney(x.valor)+'</td></tr>';
+    }).join('');
+    var tableHtml = '<table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Fonte</th><th style="text-align:right;">Valor</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    var totalHtml = '<table style="margin-top:4px;"><tfoot><tr><td colspan="4"><strong>TOTAL</strong></td><td style="text-align:right;"><strong>'+fmtMoney(total)+'</strong></td></tr></tfoot></table>';
+    var filtrosTxt = [ini&&'De: '+ini, fim&&'Até: '+fim, tipo&&'Categoria: '+tipo].filter(Boolean).join(' | ') || 'Sem filtros';
+    abrirJanelaPDF('Despesas Realizadas', 'Período: '+(ini||'—')+' a '+(fim||'—'), filtrosTxt, tableHtml, totalHtml);
+  };
+
+  // =============================================================
+  // INJETAR SEÇÃO DE PREVISÕES NO MÓDULO RELATÓRIOS
+  // =============================================================
+  var _origRenderRelFinal = window.renderRelatorios;
+  window.renderRelatorios = function(){
+    _origRenderRelFinal.apply(this, arguments);
+    setTimeout(function(){
+      var c = document.getElementById('relContent'); if(!c) return;
+      // Verifica se já injetou
+      if(document.getElementById('relPrevisoesSection')) return;
+
+      var section = document.createElement('div');
+      section.id = 'relPrevisoesSection';
+      section.style.cssText = 'margin-top:24px;';
+      section.innerHTML =
+        '<div class="sec-header" style="margin-bottom:14px;">'+
+          '<span class="sec-title">📋 Relatórios de Previsões</span>'+
+          '<div class="sec-line"></div>'+
+        '</div>'+
+        '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:18px;">'+
+          _relCard('📈','Receitas Previstas','Receitas planejadas por mês','relReceitasPrevistas()')+
+          _relCard('📊','Receitas Realizadas','Receitas efetivamente recebidas','relReceitasRealizadas()')+
+          _relCard('📉','Despesas Previstas','Despesas planejadas por categoria','relDespesasPrevistas()')+
+          _relCard('💳','Despesas Realizadas','A Pagar + Contas consolidados','relDespesasRealizadas()')+
+        '</div>';
+      c.appendChild(section);
+    }, 300);
+  };
+
+  function _relCard(icon, titulo, desc, onclick){
+    return '<div class="card" style="cursor:pointer;transition:.15s;" onclick="'+onclick+'" onmouseover="this.style.borderColor=\'var(--sky)\'" onmouseout="this.style.borderColor=\'\'">'+
+      '<div style="font-size:22px;margin-bottom:8px;">'+icon+'</div>'+
+      '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">'+escHtml(titulo)+'</div>'+
+      '<div style="font-size:12px;color:var(--text3);">'+escHtml(desc)+'</div>'+
+      '<button class="btn btn-sm" style="margin-top:12px;width:100%;" onclick="event.stopPropagation();'+onclick+'">Abrir relatório</button>'+
+    '</div>';
+  }
+
+  console.log('✓ NEXUS ONE — Previsões: totais + gráfico + remoção consolidado + Relatórios de Previsões carregados.');
+})();
+</script>
 </body>
 </html>
