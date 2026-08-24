@@ -10303,145 +10303,127 @@ window.execRelSubtipo = function(){
 
 // ----------------------------------------------------------------
 // [v7-5b] PDF — MOVIMENTAÇÃO POR TIPO
+// Usa apenas fmtR e esc, que são funções globais do NEXUS ONE
 // ----------------------------------------------------------------
 window.pdfRelMovTipo = function(){
-  var ini = document.getElementById('rptIni')?.value||'';
-  var fim = document.getElementById('rptFim')?.value||'';
+  var ini = document.getElementById('rptIni') ? document.getElementById('rptIni').value : '';
+  var fim = document.getElementById('rptFim') ? document.getElementById('rptFim').value : '';
 
-  var movs = DATA.movimentacoes.filter(function(x){
+  var movs = (DATA.movimentacoes||[]).filter(function(x){
     return x.status!=='ANULADO' && x.tipo!=='Transferência' &&
       (!ini||x.data>=ini) && (!fim||x.data<=fim);
   });
 
   var grupos = {};
-  function addGrupo(key, val, op, tipoNome){
-    if(!grupos[key]) grupos[key]={tipo:key, tipoNome:tipoNome, op:op, total:0, count:0};
-    grupos[key].total += val; grupos[key].count++;
-  }
   movs.forEach(function(x){
-    addGrupo(
-      (x.tipoOp==='RECEITA'?'RECEITA':'DESPESA')+' — '+(x.tipo||'Outros'),
-      x.valor, x.tipoOp, x.tipo||'Outros'
-    );
+    var chave = (x.tipoOp==='RECEITA'?'RECEITA':'DESPESA')+'|||'+(x.tipo||'Outros');
+    if(!grupos[chave]) grupos[chave]={tipoNome:x.tipo||'Outros', op:x.tipoOp||'DESPESA', total:0, count:0};
+    grupos[chave].total += Number(x.valor)||0;
+    grupos[chave].count++;
   });
 
-  if(!Object.keys(grupos).length){
+  var lista = Object.values(grupos);
+  if(!lista.length){
     showToast('Nenhum dado no período para gerar PDF','var(--amber)');
     return;
   }
 
   var totalRec=0, totalDesp=0;
-  Object.values(grupos).forEach(function(g){
-    if(g.op==='RECEITA') totalRec+=g.total; else totalDesp+=g.total;
-  });
+  lista.forEach(function(g){ if(g.op==='RECEITA') totalRec+=g.total; else totalDesp+=g.total; });
   var totalGeral = totalRec + totalDesp;
-  var resultado = totalRec - totalDesp;
-  var totalQtd = 0;
+  var resultado  = totalRec - totalDesp;
 
-  var sorted = Object.values(grupos).sort(function(a,b){
+  var sorted = lista.slice().sort(function(a,b){
     if(a.op!==b.op) return a.op==='RECEITA'?-1:1;
     return b.total-a.total;
   });
 
-  // Cards HTML para o PDF
-  var cardsHtml =
-    '<table style="width:100%;border-collapse:collapse;margin-bottom:18px;border:none;">' +
-    '<tr>' +
-    '<td style="width:33%;padding:14px 16px;background:#e8f8f2;border:2px solid #00c47e;border-radius:10px;text-align:center;vertical-align:top;">' +
-      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#007a50;font-weight:700;margin-bottom:6px;">💰 TOTAL RECEITAS</div>' +
-      '<div style="font-size:24px;font-weight:800;color:#007a50;font-family:Arial;">' + fmtMoney(totalRec) + '</div>' +
-    '</td>' +
-    '<td style="width:4%;"></td>' +
-    '<td style="width:33%;padding:14px 16px;background:#fef0f2;border:2px solid #e63257;border-radius:10px;text-align:center;vertical-align:top;">' +
-      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#a0002a;font-weight:700;margin-bottom:6px;">📤 TOTAL DESPESAS</div>' +
-      '<div style="font-size:24px;font-weight:800;color:#a0002a;font-family:Arial;">' + fmtMoney(totalDesp) + '</div>' +
-    '</td>' +
-    '<td style="width:4%;"></td>' +
-    '<td style="width:33%;padding:14px 16px;background:' + (resultado>=0?'#e8f8f2':'#fef0f2') + ';border:2px solid ' + (resultado>=0?'#00c47e':'#e63257') + ';border-radius:10px;text-align:center;vertical-align:top;">' +
-      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:' + (resultado>=0?'#007a50':'#a0002a') + ';font-weight:700;margin-bottom:6px;">⚖️ RESULTADO</div>' +
-      '<div style="font-size:24px;font-weight:800;color:' + (resultado>=0?'#007a50':'#a0002a') + ';font-family:Arial;">' + (resultado>=0?'+':'') + fmtMoney(resultado) + '</div>' +
-    '</td>' +
-    '</tr>' +
-    '</table>';
+  // ---- Cards ----
+  var corRec='#007a50', bgRec='#e8f8f2', bdRec='#00c47e';
+  var corDesp='#a0002a', bgDesp='#fef0f2', bdDesp='#e63257';
+  var corRes=resultado>=0?corRec:corDesp, bgRes=resultado>=0?bgRec:bgDesp, bdRes=resultado>=0?bdRec:bdDesp;
 
-  // Tabela HTML para o PDF
-  var rows = '';
-  var lastOp = '';
+  var cardsHtml=
+    '<table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:20px;border-collapse:separate;border-spacing:12px 0;"><tr>'+
+    '<td width="32%" style="padding:14px 16px;background:'+bgRec+';border:2px solid '+bdRec+';border-radius:8px;text-align:center;">'+
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:'+corRec+';font-weight:700;margin-bottom:5px;">&#x1F4B0; TOTAL RECEITAS</div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+corRec+';">'+fmtR(totalRec)+'</div>'+
+    '</td>'+
+    '<td width="32%" style="padding:14px 16px;background:'+bgDesp+';border:2px solid '+bdDesp+';border-radius:8px;text-align:center;">'+
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:'+corDesp+';font-weight:700;margin-bottom:5px;">&#x1F4E4; TOTAL DESPESAS</div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+corDesp+';">'+fmtR(totalDesp)+'</div>'+
+    '</td>'+
+    '<td width="32%" style="padding:14px 16px;background:'+bgRes+';border:2px solid '+bdRes+';border-radius:8px;text-align:center;">'+
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:'+corRes+';font-weight:700;margin-bottom:5px;">&#x2696;&#xFE0F; RESULTADO</div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+corRes+';">'+(resultado>=0?'+':'')+fmtR(resultado)+'</div>'+
+    '</td>'+
+    '</tr></table>';
+
+  // ---- Tabela ----
+  var rows='', lastOp='', totalQtd=0;
   sorted.forEach(function(g){
     if(g.op!==lastOp){
-      lastOp = g.op;
-      var opTotal = g.op==='RECEITA'?totalRec:totalDesp;
-      var opQtd = sorted.filter(function(x){ return x.op===g.op; }).reduce(function(s,x){ return s+x.count; }, 0);
-      rows += '<tr style="background:'+(g.op==='RECEITA'?'#d4f5e9':'#fde0e5')+';">' +
-        '<td colspan="4" style="font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:'+(g.op==='RECEITA'?'#007a50':'#a0002a')+';">' +
-          (g.op==='RECEITA'?'▲ RECEITAS':'▼ DESPESAS') + ' — Total: ' + fmtMoney(opTotal) + ' · ' + opQtd + ' lançamento(s)' +
+      lastOp=g.op;
+      var opTotal=g.op==='RECEITA'?totalRec:totalDesp;
+      var opQtd=sorted.filter(function(x){return x.op===g.op;}).reduce(function(s,x){return s+x.count;},0);
+      rows+='<tr style="background:'+(g.op==='RECEITA'?'#d4f5e9':'#fde0e5')+';">'+
+        '<td colspan="4" style="font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:'+(g.op==='RECEITA'?corRec:corDesp)+';">'+
+          (g.op==='RECEITA'?'&#x25B2; RECEITAS':'&#x25BC; DESPESAS')+' &mdash; Total: '+fmtR(opTotal)+' &middot; '+opQtd+' lan&ccedil;amento(s)'+
         '</td></tr>';
     }
-    var pct = totalGeral>0?(g.total/totalGeral*100):0;
-    totalQtd += g.count;
-    rows += '<tr>' +
-      '<td style="padding-left:20px;">' + escHtml(g.tipoNome) + '</td>' +
-      '<td style="text-align:right;color:#666;">' + g.count + '</td>' +
-      '<td style="text-align:right;font-weight:700;color:' + (g.op==='RECEITA'?'#007a50':'#a0002a') + ';">' + fmtMoney(g.total) + '</td>' +
-      '<td style="text-align:right;color:#888;">' + pct.toFixed(1) + '%</td>' +
+    var pct=totalGeral>0?(g.total/totalGeral*100):0;
+    totalQtd+=g.count;
+    rows+='<tr>'+
+      '<td style="padding-left:18px;">'+esc(g.tipoNome)+'</td>'+
+      '<td style="text-align:right;color:#555;">'+g.count+'</td>'+
+      '<td style="text-align:right;font-weight:700;color:'+(g.op==='RECEITA'?corRec:corDesp)+';">'+fmtR(g.total)+'</td>'+
+      '<td style="text-align:right;color:#888;">'+pct.toFixed(1)+'%</td>'+
       '</tr>';
   });
 
-  var tableHtml =
-    '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">' +
-    '<thead><tr>' +
-      '<th style="text-align:left;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;">Classificação / Tipo</th>' +
-      '<th style="text-align:right;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;">Qtd.</th>' +
-      '<th style="text-align:right;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;">Total R$</th>' +
-      '<th style="text-align:right;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;">% do Total</th>' +
-    '</tr></thead>' +
-    '<tbody>' + rows + '</tbody>' +
-    '<tfoot><tr style="background:#fffae8;">' +
-      '<td style="font-weight:800;color:#b85c00;padding:7px 9px;">TOTAL GERAL</td>' +
-      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">' + totalQtd + '</td>' +
-      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">' + fmtMoney(totalGeral) + '</td>' +
-      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">100%</td>' +
-    '</tr></tfoot>' +
+  var tableHtml=
+    '<table width="100%" style="border-collapse:collapse;font-size:11.5px;">'+
+    '<thead><tr>'+
+      '<th style="text-align:left;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.4px;">Classifica&ccedil;&atilde;o / Tipo</th>'+
+      '<th style="text-align:right;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;">Qtd.</th>'+
+      '<th style="text-align:right;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;">Total R$</th>'+
+      '<th style="text-align:right;background:#0f3d3e;color:#fff;padding:7px 9px;font-size:10px;">% do Total</th>'+
+    '</tr></thead>'+
+    '<tbody>'+rows+'</tbody>'+
+    '<tfoot><tr style="background:#fffae8;border-top:2px solid #b85c00;">'+
+      '<td style="font-weight:800;color:#b85c00;padding:7px 9px;">TOTAL GERAL</td>'+
+      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">'+totalQtd+'</td>'+
+      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">'+fmtR(totalGeral)+'</td>'+
+      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">100%</td>'+
+    '</tr></tfoot>'+
     '</table>';
 
-  var filtrosTxt = [
-    ini ? 'De: ' + fmtD(ini) : '',
-    fim ? 'Até: ' + fmtD(fim) : ''
-  ].filter(Boolean).join(' | ') || 'Período: todos os registros';
+  var filtrosTxt=(ini?'De: '+fmtD(ini):'')+(ini&&fim?' | ':'')+(fim?'At&eacute;: '+fmtD(fim):'');
+  if(!filtrosTxt) filtrosTxt='Per&iacute;odo: todos os registros';
 
-  // Chama abrirJanelaPDF com cards + tabela
-  var agora = new Date();
-  var dtGeracao = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR');
-  var win = window.open('','_blank');
+  var agora=new Date();
+  var dtGer=agora.toLocaleDateString('pt-BR')+' '+agora.toLocaleTimeString('pt-BR');
+  var win=window.open('','_blank');
   if(!win){ showToast('Bloqueio de popup detectado. Permita popups para gerar o PDF.','var(--amber)'); return; }
   win.document.write(
-    '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'+
-    '<title>Movimentação por Tipo</title>'+
-    '<style>'+
-      '*{box-sizing:border-box;}'+
-      'body{font-family:Arial,Helvetica,sans-serif;color:#1b2436;padding:24px;margin:0;}'+
-      '.pdf-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f3d3e;padding-bottom:10px;margin-bottom:16px;}'+
-      '.pdf-header h1{font-size:15px;margin:0 0 3px 0;color:#0f3d3e;}'+
-      '.pdf-header h2{font-size:13px;font-weight:700;margin:0;color:#222;}'+
-      '.pdf-meta{font-size:10px;color:#666;text-align:right;}'+
-      '.pdf-filtros{font-size:11.5px;color:#555;margin-bottom:16px;padding:7px 10px;background:#f8f9fc;border-left:3px solid #0f3d3e;border-radius:3px;}'+
-      'table{width:100%;border-collapse:collapse;font-size:11.5px;}'+
-      'th,td{border:1px solid #dde4f0;padding:6px 9px;}'+
-      'th{background:#0f3d3e;color:#fff;text-transform:uppercase;font-size:10px;letter-spacing:.4px;}'+
-      'tbody tr:nth-child(even){background:#f8f9fc;}'+
-      'tbody tr:hover{background:#eef3ff;}'+
-      'tfoot td{background:#fffae8;border-top:2px solid #b85c00;font-weight:800;}'+
-      '.pdf-footer{margin-top:16px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:8px;display:flex;justify-content:space-between;}'+
-      '@page{margin:14mm;}@media print{body{padding:0;}}'+
+    '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Movimenta&ccedil;&atilde;o por Tipo</title>'+
+    '<style>*{box-sizing:border-box;}body{font-family:Arial,Helvetica,sans-serif;color:#1b2436;padding:24px;margin:0;}'+
+    '.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f3d3e;padding-bottom:10px;margin-bottom:14px;}'+
+    '.hdr h1{font-size:14px;margin:0 0 2px;color:#0f3d3e;}.hdr h2{font-size:13px;font-weight:700;margin:0;color:#222;}'+
+    '.meta{font-size:10px;color:#666;text-align:right;}'+
+    '.fil{font-size:11px;color:#555;margin-bottom:14px;padding:6px 10px;background:#f5f7fc;border-left:3px solid #0f3d3e;}'+
+    'table{width:100%;border-collapse:collapse;font-size:11.5px;}th,td{border:1px solid #dde4f0;padding:5px 8px;}'+
+    'th{background:#0f3d3e;color:#fff;text-transform:uppercase;font-size:9.5px;letter-spacing:.4px;}'+
+    'tbody tr:nth-child(even){background:#f6f8fc;}'+
+    'tfoot td{background:#fffae8;border-top:2px solid #b85c00;font-weight:800;}'+
+    '.ftr{margin-top:14px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:7px;display:flex;justify-content:space-between;}'+
+    '@page{margin:13mm;}@media print{body{padding:0;}}'+
     '</style></head><body>'+
-    '<div class="pdf-header">'+
-      '<div><h1>NEXUS ONE — Sistema Financeiro Pro</h1><h2>📊 Movimentação por Tipo</h2></div>'+
-      '<div class="pdf-meta">Gerado em: ' + dtGeracao + '</div>'+
-    '</div>'+
-    '<div class="pdf-filtros"><strong>Filtros aplicados:</strong> ' + filtrosTxt + '</div>'+
-    cardsHtml +
-    tableHtml +
-    '<div class="pdf-footer"><span>NEXUS ONE · Relatório Movimentação por Tipo</span><span>' + dtGeracao + '</span></div>'+
+    '<div class="hdr"><div><h1>NEXUS ONE &mdash; Sistema Financeiro Pro</h1><h2>&#x1F4CA; Movimenta&ccedil;&atilde;o por Tipo</h2></div>'+
+    '<div class="meta">Gerado em: '+dtGer+'</div></div>'+
+    '<div class="fil"><strong>Filtros:</strong> '+filtrosTxt+'</div>'+
+    cardsHtml+tableHtml+
+    '<div class="ftr"><span>NEXUS ONE &middot; Relat&oacute;rio Movimenta&ccedil;&atilde;o por Tipo</span><span>'+dtGer+'</span></div>'+
     '<'+'script>window.onload=function(){window.print();};</'+'script>'+
     '</body></html>'
   );
@@ -10450,12 +10432,13 @@ window.pdfRelMovTipo = function(){
 
 // ----------------------------------------------------------------
 // [v7-5c] PDF — MOVIMENTAÇÃO POR SUBTIPO
+// Usa apenas fmtR e esc, que são funções globais do NEXUS ONE
 // ----------------------------------------------------------------
 window.pdfRelMovSubtipo = function(){
-  var ini = document.getElementById('rpsIni')?.value||'';
-  var fim = document.getElementById('rpsFim')?.value||'';
+  var ini = document.getElementById('rpsIni') ? document.getElementById('rpsIni').value : '';
+  var fim = document.getElementById('rpsFim') ? document.getElementById('rpsFim').value : '';
 
-  var movs = DATA.movimentacoes.filter(function(x){
+  var movs = (DATA.movimentacoes||[]).filter(function(x){
     return x.status!=='ANULADO' && x.tipo!=='Transferência' &&
       (!ini||x.data>=ini) && (!fim||x.data<=fim);
   });
@@ -10463,140 +10446,129 @@ window.pdfRelMovSubtipo = function(){
   var grupos = {};
   movs.forEach(function(x){
     var sub = x.subtipo||'(sem subtipo)';
-    var key = (x.tipoOp==='RECEITA'?'RECEITA':'DESPESA')+' ‣ '+(x.tipo||'Outros')+' ‣ '+sub;
-    if(!grupos[key]) grupos[key]={label:key, op:x.tipoOp, tipo:x.tipo||'Outros', sub:sub, total:0, count:0};
-    grupos[key].total += x.valor; grupos[key].count++;
+    var chave = (x.tipoOp==='RECEITA'?'R':'D')+'|||'+(x.tipo||'Outros')+'|||'+sub;
+    if(!grupos[chave]) grupos[chave]={op:x.tipoOp||'DESPESA', tipo:x.tipo||'Outros', sub:sub, total:0, count:0};
+    grupos[chave].total += Number(x.valor)||0;
+    grupos[chave].count++;
   });
 
-  if(!Object.keys(grupos).length){
+  var lista = Object.values(grupos);
+  if(!lista.length){
     showToast('Nenhum dado no período para gerar PDF','var(--amber)');
     return;
   }
 
   var totalRec=0, totalDesp=0;
-  Object.values(grupos).forEach(function(g){
-    if(g.op==='RECEITA') totalRec+=g.total; else totalDesp+=g.total;
-  });
-  var resultado = totalRec - totalDesp;
-  var totalGeral = totalRec + totalDesp;
+  lista.forEach(function(g){ if(g.op==='RECEITA') totalRec+=g.total; else totalDesp+=g.total; });
+  var totalGeral=totalRec+totalDesp, resultado=totalRec-totalDesp;
 
-  var sorted = Object.values(grupos).sort(function(a,b){
+  var sorted = lista.slice().sort(function(a,b){
     if(a.op!==b.op) return a.op==='RECEITA'?-1:1;
     if(a.tipo!==b.tipo) return a.tipo.localeCompare(b.tipo);
     return b.total-a.total;
   });
 
-  // Cards HTML
-  var cardsHtml =
-    '<table style="width:100%;border-collapse:collapse;margin-bottom:18px;border:none;"><tr>' +
-    '<td style="width:33%;padding:14px 16px;background:#e8f8f2;border:2px solid #00c47e;border-radius:10px;text-align:center;vertical-align:top;">' +
-      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#007a50;font-weight:700;margin-bottom:6px;">💰 TOTAL RECEITAS</div>' +
-      '<div style="font-size:24px;font-weight:800;color:#007a50;">' + fmtMoney(totalRec) + '</div>' +
-    '</td>' +
-    '<td style="width:4%;"></td>' +
-    '<td style="width:33%;padding:14px 16px;background:#fef0f2;border:2px solid #e63257;border-radius:10px;text-align:center;vertical-align:top;">' +
-      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#a0002a;font-weight:700;margin-bottom:6px;">📤 TOTAL DESPESAS</div>' +
-      '<div style="font-size:24px;font-weight:800;color:#a0002a;">' + fmtMoney(totalDesp) + '</div>' +
-    '</td>' +
-    '<td style="width:4%;"></td>' +
-    '<td style="width:33%;padding:14px 16px;background:' + (resultado>=0?'#e8f8f2':'#fef0f2') + ';border:2px solid ' + (resultado>=0?'#00c47e':'#e63257') + ';border-radius:10px;text-align:center;vertical-align:top;">' +
-      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:' + (resultado>=0?'#007a50':'#a0002a') + ';font-weight:700;margin-bottom:6px;">⚖️ RESULTADO</div>' +
-      '<div style="font-size:24px;font-weight:800;color:' + (resultado>=0?'#007a50':'#a0002a') + ';">' + (resultado>=0?'+':'') + fmtMoney(resultado) + '</div>' +
-    '</td>' +
+  // ---- Cards ----
+  var corRec='#007a50', bgRec='#e8f8f2', bdRec='#00c47e';
+  var corDesp='#a0002a', bgDesp='#fef0f2', bdDesp='#e63257';
+  var corRes=resultado>=0?corRec:corDesp, bgRes=resultado>=0?bgRec:bgDesp, bdRes=resultado>=0?bdRec:bdDesp;
+
+  var cardsHtml=
+    '<table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:20px;border-collapse:separate;border-spacing:12px 0;"><tr>'+
+    '<td width="32%" style="padding:14px 16px;background:'+bgRec+';border:2px solid '+bdRec+';border-radius:8px;text-align:center;">'+
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:'+corRec+';font-weight:700;margin-bottom:5px;">&#x1F4B0; TOTAL RECEITAS</div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+corRec+';">'+fmtR(totalRec)+'</div>'+
+    '</td>'+
+    '<td width="32%" style="padding:14px 16px;background:'+bgDesp+';border:2px solid '+bdDesp+';border-radius:8px;text-align:center;">'+
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:'+corDesp+';font-weight:700;margin-bottom:5px;">&#x1F4E4; TOTAL DESPESAS</div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+corDesp+';">'+fmtR(totalDesp)+'</div>'+
+    '</td>'+
+    '<td width="32%" style="padding:14px 16px;background:'+bgRes+';border:2px solid '+bdRes+';border-radius:8px;text-align:center;">'+
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:'+corRes+';font-weight:700;margin-bottom:5px;">&#x2696;&#xFE0F; RESULTADO</div>'+
+      '<div style="font-size:22px;font-weight:800;color:'+corRes+';">'+(resultado>=0?'+':'')+fmtR(resultado)+'</div>'+
+    '</td>'+
     '</tr></table>';
 
-  // Tabela hierárquica
-  var rows = '';
-  var lastOp = '', lastTipo = '';
-  var totalQtdGeral = 0;
-
+  // ---- Tabela hierárquica ----
+  var rows='', lastOp='', lastTipo='', totalQtdGeral=0;
   sorted.forEach(function(g){
     if(g.op!==lastOp){
-      lastOp = g.op; lastTipo = '';
-      var opTot = g.op==='RECEITA'?totalRec:totalDesp;
-      var opQtd = sorted.filter(function(x){ return x.op===g.op; }).reduce(function(s,x){ return s+x.count; }, 0);
-      rows += '<tr style="background:'+(g.op==='RECEITA'?'#d4f5e9':'#fde0e5')+';">' +
-        '<td colspan="5" style="font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:'+(g.op==='RECEITA'?'#007a50':'#a0002a')+';">' +
-          (g.op==='RECEITA'?'▲ RECEITAS':'▼ DESPESAS') + ' — Total: ' + fmtMoney(opTot) + ' · ' + opQtd + ' lançamento(s)' +
+      lastOp=g.op; lastTipo='';
+      var opTot=g.op==='RECEITA'?totalRec:totalDesp;
+      var opQtd=sorted.filter(function(x){return x.op===g.op;}).reduce(function(s,x){return s+x.count;},0);
+      rows+='<tr style="background:'+(g.op==='RECEITA'?'#d4f5e9':'#fde0e5')+';">'+
+        '<td colspan="5" style="font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:'+(g.op==='RECEITA'?corRec:corDesp)+';">'+
+          (g.op==='RECEITA'?'&#x25B2; RECEITAS':'&#x25BC; DESPESAS')+' &mdash; Total: '+fmtR(opTot)+' &middot; '+opQtd+' lan&ccedil;amento(s)'+
         '</td></tr>';
     }
     if(g.tipo!==lastTipo){
-      lastTipo = g.tipo;
-      var tipoArr = sorted.filter(function(x){ return x.op===g.op && x.tipo===g.tipo; });
-      var tipoTot = tipoArr.reduce(function(s,x){ return s+x.total; }, 0);
-      var tipoQtd = tipoArr.reduce(function(s,x){ return s+x.count; }, 0);
-      rows += '<tr style="background:#f5f3ff;">' +
-        '<td colspan="2" style="font-weight:700;color:#6d28d9;padding-left:14px;">📂 ' + escHtml(g.tipo) + '</td>' +
-        '<td style="text-align:right;color:#888;font-weight:600;">' + tipoQtd + '</td>' +
-        '<td style="text-align:right;font-weight:700;color:' + (g.op==='RECEITA'?'#007a50':'#a0002a') + ';">' + fmtMoney(tipoTot) + '</td>' +
-        '<td style="text-align:right;color:#888;">—</td>' +
+      lastTipo=g.tipo;
+      var tipoArr=sorted.filter(function(x){return x.op===g.op&&x.tipo===g.tipo;});
+      var tipoTot=tipoArr.reduce(function(s,x){return s+x.total;},0);
+      var tipoQtd=tipoArr.reduce(function(s,x){return s+x.count;},0);
+      rows+='<tr style="background:#f0eeff;">'+
+        '<td colspan="2" style="font-weight:700;color:#5b21b6;padding-left:14px;">&#x1F4C2; '+esc(g.tipo)+'</td>'+
+        '<td style="text-align:right;color:#666;font-weight:600;">'+tipoQtd+'</td>'+
+        '<td style="text-align:right;font-weight:700;color:'+(g.op==='RECEITA'?corRec:corDesp)+';">'+fmtR(tipoTot)+'</td>'+
+        '<td style="text-align:right;color:#888;">&mdash;</td>'+
         '</tr>';
     }
-    var tipoTot2 = sorted.filter(function(x){ return x.op===g.op && x.tipo===g.tipo; }).reduce(function(s,x){ return s+x.total; }, 0);
-    var pct = tipoTot2>0?(g.total/tipoTot2*100):0;
-    totalQtdGeral += g.count;
-    rows += '<tr>' +
-      '<td style="padding-left:28px;color:#888;font-size:11px;">└</td>' +
-      '<td style="font-size:12px;">' + escHtml(g.sub) + '</td>' +
-      '<td style="text-align:right;color:#666;">' + g.count + '</td>' +
-      '<td style="text-align:right;color:' + (g.op==='RECEITA'?'#007a50':'#a0002a') + ';">' + fmtMoney(g.total) + '</td>' +
-      '<td style="text-align:right;color:#888;">' + pct.toFixed(1) + '%</td>' +
+    var tipoTot2=sorted.filter(function(x){return x.op===g.op&&x.tipo===g.tipo;}).reduce(function(s,x){return s+x.total;},0);
+    var pct=tipoTot2>0?(g.total/tipoTot2*100):0;
+    totalQtdGeral+=g.count;
+    rows+='<tr>'+
+      '<td style="padding-left:26px;color:#aaa;font-size:11px;">&rdsh;</td>'+
+      '<td style="font-size:12px;">'+esc(g.sub)+'</td>'+
+      '<td style="text-align:right;color:#555;">'+g.count+'</td>'+
+      '<td style="text-align:right;color:'+(g.op==='RECEITA'?corRec:corDesp)+';">'+fmtR(g.total)+'</td>'+
+      '<td style="text-align:right;color:#888;">'+pct.toFixed(1)+'%</td>'+
       '</tr>';
   });
 
-  var tableHtml =
-    '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">' +
-    '<thead><tr>' +
-      '<th style="background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;text-align:left;width:40px;">↳</th>' +
-      '<th style="background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;text-align:left;">Tipo / Subtipo</th>' +
-      '<th style="background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;text-align:right;">Qtd.</th>' +
-      '<th style="background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;text-align:right;">Total R$</th>' +
-      '<th style="background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;letter-spacing:.5px;text-align:right;">% Categoria</th>' +
-    '</tr></thead>' +
-    '<tbody>' + rows + '</tbody>' +
-    '<tfoot><tr style="background:#fffae8;">' +
-      '<td colspan="2" style="font-weight:800;color:#b85c00;padding:7px 9px;">TOTAL GERAL</td>' +
-      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">' + totalQtdGeral + '</td>' +
-      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">' + fmtMoney(totalGeral) + '</td>' +
-      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">—</td>' +
-    '</tr></tfoot>' +
+  var tableHtml=
+    '<table width="100%" style="border-collapse:collapse;font-size:11.5px;">'+
+    '<thead><tr>'+
+      '<th style="text-align:left;background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;width:36px;">&#x21B3;</th>'+
+      '<th style="text-align:left;background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;">Tipo / Subtipo</th>'+
+      '<th style="text-align:right;background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;">Qtd.</th>'+
+      '<th style="text-align:right;background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;">Total R$</th>'+
+      '<th style="text-align:right;background:#3d1a78;color:#fff;padding:7px 9px;font-size:10px;">% Categoria</th>'+
+    '</tr></thead>'+
+    '<tbody>'+rows+'</tbody>'+
+    '<tfoot><tr style="background:#fffae8;border-top:2px solid #b85c00;">'+
+      '<td colspan="2" style="font-weight:800;color:#b85c00;padding:7px 9px;">TOTAL GERAL</td>'+
+      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">'+totalQtdGeral+'</td>'+
+      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">'+fmtR(totalGeral)+'</td>'+
+      '<td style="text-align:right;font-weight:800;color:#b85c00;padding:7px 9px;">&mdash;</td>'+
+    '</tr></tfoot>'+
     '</table>';
 
-  var filtrosTxt = [
-    ini ? 'De: ' + fmtD(ini) : '',
-    fim ? 'Até: ' + fmtD(fim) : ''
-  ].filter(Boolean).join(' | ') || 'Período: todos os registros';
+  var filtrosTxt=(ini?'De: '+fmtD(ini):'')+(ini&&fim?' | ':'')+(fim?'At&eacute;: '+fmtD(fim):'');
+  if(!filtrosTxt) filtrosTxt='Per&iacute;odo: todos os registros';
 
-  var agora = new Date();
-  var dtGeracao = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR');
-  var win = window.open('','_blank');
+  var agora=new Date();
+  var dtGer=agora.toLocaleDateString('pt-BR')+' '+agora.toLocaleTimeString('pt-BR');
+  var win=window.open('','_blank');
   if(!win){ showToast('Bloqueio de popup detectado. Permita popups para gerar o PDF.','var(--amber)'); return; }
   win.document.write(
-    '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'+
-    '<title>Movimentação por Subtipo</title>'+
-    '<style>'+
-      '*{box-sizing:border-box;}'+
-      'body{font-family:Arial,Helvetica,sans-serif;color:#1b2436;padding:24px;margin:0;}'+
-      '.pdf-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #3d1a78;padding-bottom:10px;margin-bottom:16px;}'+
-      '.pdf-header h1{font-size:15px;margin:0 0 3px 0;color:#3d1a78;}'+
-      '.pdf-header h2{font-size:13px;font-weight:700;margin:0;color:#222;}'+
-      '.pdf-meta{font-size:10px;color:#666;text-align:right;}'+
-      '.pdf-filtros{font-size:11.5px;color:#555;margin-bottom:16px;padding:7px 10px;background:#f8f5ff;border-left:3px solid #3d1a78;border-radius:3px;}'+
-      'table{width:100%;border-collapse:collapse;font-size:11.5px;}'+
-      'th,td{border:1px solid #dde4f0;padding:6px 9px;}'+
-      'tbody tr:nth-child(even){background:#f8f9fc;}'+
-      'tfoot td{background:#fffae8;border-top:2px solid #b85c00;font-weight:800;}'+
-      '.pdf-footer{margin-top:16px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:8px;display:flex;justify-content:space-between;}'+
-      '@page{margin:14mm;}@media print{body{padding:0;}}'+
+    '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Movimenta&ccedil;&atilde;o por Subtipo</title>'+
+    '<style>*{box-sizing:border-box;}body{font-family:Arial,Helvetica,sans-serif;color:#1b2436;padding:24px;margin:0;}'+
+    '.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #3d1a78;padding-bottom:10px;margin-bottom:14px;}'+
+    '.hdr h1{font-size:14px;margin:0 0 2px;color:#3d1a78;}.hdr h2{font-size:13px;font-weight:700;margin:0;color:#222;}'+
+    '.meta{font-size:10px;color:#666;text-align:right;}'+
+    '.fil{font-size:11px;color:#555;margin-bottom:14px;padding:6px 10px;background:#f8f5ff;border-left:3px solid #3d1a78;}'+
+    'table{width:100%;border-collapse:collapse;font-size:11.5px;}th,td{border:1px solid #dde4f0;padding:5px 8px;}'+
+    'th{text-transform:uppercase;font-size:9.5px;letter-spacing:.4px;}'+
+    'tbody tr:nth-child(even){background:#f8f9fc;}'+
+    'tfoot td{background:#fffae8;border-top:2px solid #b85c00;font-weight:800;}'+
+    '.ftr{margin-top:14px;font-size:10px;color:#888;border-top:1px solid #ccc;padding-top:7px;display:flex;justify-content:space-between;}'+
+    '@page{margin:13mm;}@media print{body{padding:0;}}'+
     '</style></head><body>'+
-    '<div class="pdf-header">'+
-      '<div><h1>NEXUS ONE — Sistema Financeiro Pro</h1><h2>🔢 Movimentação por Subtipo</h2></div>'+
-      '<div class="pdf-meta">Gerado em: ' + dtGeracao + '</div>'+
-    '</div>'+
-    '<div class="pdf-filtros"><strong>Filtros aplicados:</strong> ' + filtrosTxt + '</div>'+
-    cardsHtml +
-    tableHtml +
-    '<div class="pdf-footer"><span>NEXUS ONE · Relatório Movimentação por Subtipo</span><span>' + dtGeracao + '</span></div>'+
+    '<div class="hdr"><div><h1>NEXUS ONE &mdash; Sistema Financeiro Pro</h1><h2>&#x1F522; Movimenta&ccedil;&atilde;o por Subtipo</h2></div>'+
+    '<div class="meta">Gerado em: '+dtGer+'</div></div>'+
+    '<div class="fil"><strong>Filtros:</strong> '+filtrosTxt+'</div>'+
+    cardsHtml+tableHtml+
+    '<div class="ftr"><span>NEXUS ONE &middot; Relat&oacute;rio Movimenta&ccedil;&atilde;o por Subtipo</span><span>'+dtGer+'</span></div>'+
     '<'+'script>window.onload=function(){window.print();};</'+'script>'+
     '</body></html>'
   );
