@@ -14609,13 +14609,19 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     return a+'-'+pad(m);
   }
   // Soma dos lançamentos PENDENTES em "A Pagar" (ainda não baixados) para
-  // essa categoria, com vencimento dentro do mês — representa o quanto
-  // ainda falta pagar. Lançamentos já baixados (status PAGO) NÃO entram
-  // aqui — esses já aparecem na coluna "Realizado", que é alimentada
-  // exclusivamente por baixas efetivas (ver realizadoCompleto).
+  // essa categoria — representa o quanto ainda falta pagar.
+  // CORREÇÃO (Etapa 2 — Auditoria): Agora busca TODAS as despesas com
+  // status pendente ou comprometido (não PAGO, não ANULADO) para essa
+  // categoria. Quando o filtro de competência (key/mês) está ativo, filtra
+  // pelo mês; caso contrário, soma tudo. Lançamentos já baixados (PAGO)
+  // NÃO entram — esses já aparecem na coluna "Realizado".
   function comprometidoCategoria(tipoNome, key){
     return (DATA.pagar||[]).filter(function(p){
-      return p.tipo===tipoNome && p.status!=='PAGO' && p.vencimento && p.vencimento.slice(0,7)===key;
+      if(p.tipo!==tipoNome) return false;
+      if(p.status==='PAGO'||p.status==='ANULADO') return false;
+      // Respeita o filtro de competência quando existir
+      if(key && p.vencimento && p.vencimento.slice(0,7)!==key) return false;
+      return true;
     }).reduce(function(s,p){ return s+(Number(p.valor)||0); },0);
   }
 
@@ -16227,6 +16233,369 @@ async function _cdbControlRestoreFromBackup(cdbData){
   };
 
   console.log('✓ NEXUS ONE — §12/§21: organização visual por tema aplicada (Relatórios agrupados + rótulos em Previsões).');
+})();
+</script>
+
+<!-- ============================================================
+  NEXUS ONE — ETAPAS 2-6: AUDITORIA, INTEGRAÇÃO, CARDS, CDB SUPABASE
+  ============================================================ -->
+<style>
+/* === ETAPA 4: REDESIGN DOS CARDS DO MÓDULO PREVISÕES === */
+.prev-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.prev-kpi-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  position: relative;
+  overflow: hidden;
+  transition: all .25s var(--ease);
+}
+.prev-kpi-item::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 0 0 16px 16px;
+  opacity: .7;
+  transition: opacity .25s;
+}
+.prev-kpi-item:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 28px rgba(0,0,0,.4);
+}
+.prev-kpi-item:hover::after { opacity: 1; }
+.prev-kpi-item .pk-icon {
+  font-size: 22px;
+  margin-bottom: 8px;
+  display: block;
+}
+.prev-kpi-item .pk-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #BCC5D8;
+  font-weight: 700;
+  margin-bottom: 6px;
+  font-family: 'Outfit', sans-serif;
+}
+.prev-kpi-item .pk-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  letter-spacing: .5px;
+  line-height: 1.2;
+}
+.prev-kpi-item .pk-sub {
+  font-size: 10px;
+  color: var(--text3);
+  margin-top: 4px;
+}
+.prev-kpi-item .pk-bar {
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+.prev-kpi-item .pk-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .8s var(--ease);
+}
+/* Cores por tipo de card */
+.prev-kpi-item.pk-receita-prev { --pk-color: var(--sky); }
+.prev-kpi-item.pk-receita-prev::after { background: var(--sky); }
+.prev-kpi-item.pk-receita-prev:hover { border-color: rgba(56,205,255,.4); }
+.prev-kpi-item.pk-receita-prev .pk-value { color: var(--sky); }
+
+.prev-kpi-item.pk-receita-real { --pk-color: var(--emerald); }
+.prev-kpi-item.pk-receita-real::after { background: var(--emerald); }
+.prev-kpi-item.pk-receita-real:hover { border-color: rgba(0,229,160,.4); }
+.prev-kpi-item.pk-receita-real .pk-value { color: var(--emerald); }
+
+.prev-kpi-item.pk-despesa-prev { --pk-color: var(--amber); }
+.prev-kpi-item.pk-despesa-prev::after { background: var(--amber); }
+.prev-kpi-item.pk-despesa-prev:hover { border-color: rgba(255,184,48,.4); }
+.prev-kpi-item.pk-despesa-prev .pk-value { color: var(--amber); }
+
+.prev-kpi-item.pk-comprometido { --pk-color: var(--coral); }
+.prev-kpi-item.pk-comprometido::after { background: var(--coral); }
+.prev-kpi-item.pk-comprometido:hover { border-color: rgba(255,77,106,.4); }
+.prev-kpi-item.pk-comprometido .pk-value { color: var(--coral); }
+
+.prev-kpi-item.pk-saldo { --pk-color: var(--emerald); }
+.prev-kpi-item.pk-saldo::after { background: var(--emerald); }
+.prev-kpi-item.pk-saldo:hover { border-color: rgba(0,229,160,.4); }
+.prev-kpi-item.pk-saldo .pk-value { color: var(--emerald); }
+
+.prev-kpi-item.pk-pct { --pk-color: var(--violet); }
+.prev-kpi-item.pk-pct::after { background: var(--violet); }
+.prev-kpi-item.pk-pct:hover { border-color: rgba(155,109,255,.4); }
+.prev-kpi-item.pk-pct .pk-value { color: var(--violet); }
+
+/* Indicadores de desempenho */
+.pk-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+.pk-status-positive { background: rgba(0,229,160,.12); color: var(--emerald); }
+.pk-status-warning { background: rgba(255,184,48,.12); color: var(--amber); }
+.pk-status-critical { background: rgba(255,77,106,.12); color: var(--coral); }
+</style>
+
+<script>
+(function nexusEtapas2a6(){
+  'use strict';
+
+  // ================================================================
+  // ETAPA 3: INTEGRAÇÃO AUTOMÁTICA ENTRE MÓDULOS
+  // Sempre que houver mudança em Contas a Pagar, Movimentações, Previsões
+  // → atualizar Dashboard, Relatórios e Previsões automaticamente
+  // ================================================================
+
+  // Wrap save() para recalcular módulos dependentes
+  var _origSaveEtapa3 = window.save;
+  window.save = function(silent){
+    var result = _origSaveEtapa3.apply(this, arguments);
+    // Após salvar, re-renderizar o módulo ativo se for dependente
+    setTimeout(function(){
+      var mod = window.currentMod;
+      if(mod === 'dashboard' && typeof window.renderDashboard === 'function'){
+        window.renderDashboard();
+      }
+      if(mod === 'previsoes' && typeof window.renderPrevisoes === 'function'){
+        window.renderPrevisoes();
+      }
+      if(mod === 'relatorios' && typeof window.renderRelatorios === 'function'){
+        window.renderRelatorios();
+      }
+    }, 100);
+    return result;
+  };
+
+  // ================================================================
+  // ETAPA 4: CARDS REDESENHADOS NO MÓDULO PREVISÕES
+  // Injeta cards de resumo profissionais com indicadores visuais
+  // ================================================================
+
+  function calcPrevSummary(key){
+    var DATA = window.DATA;
+    if(!DATA) return null;
+
+    // Receita Prevista
+    var rp = (DATA.receitasPrevistas||[]).find(function(r){ return r.mesAno===key; });
+    var receitaPrevista = rp ? (Number(rp.valor)||0) : 0;
+
+    // Receita Realizada (movimentações de receita do mês)
+    var receitaRealizada = (DATA.movimentacoes||[]).filter(function(x){
+      return x.tipoOp==='RECEITA' && x.status!=='ANULADO' && x.data && x.data.slice(0,7)===key && x.tipo!=='Transferência';
+    }).reduce(function(s,x){ return s+(Number(x.valor)||0); }, 0);
+
+    // Despesa Prevista (soma das previsões distribuídas por categoria)
+    var previsoes = (DATA.previsoes||[]).filter(function(p){ return p.mesAno===key; });
+    var despesaPrevista = previsoes.reduce(function(s,p){ return s+(Number(p.valorPrevisto)||0); }, 0);
+    // Também considerar a receita prevista com distribuição percentual
+    if(despesaPrevista===0 && receitaPrevista>0){
+      // Usar as distribuições percentuais se existirem
+      var dists = (DATA.previsoes||[]).filter(function(p){ return p.mesAno===key && p.percentualReceita; });
+      despesaPrevista = dists.reduce(function(s,p){
+        return s + (receitaPrevista * ((Number(p.percentualReceita)||0)/100));
+      }, 0);
+    }
+
+    // Já Comprometido (A Pagar: pendentes para este mês)
+    var comprometido = (DATA.pagar||[]).filter(function(p){
+      return p.status!=='PAGO' && p.status!=='ANULADO' && p.vencimento && p.vencimento.slice(0,7)===key;
+    }).reduce(function(s,p){ return s+(Number(p.valor)||0); }, 0);
+
+    // Despesa Realizada
+    var despesaRealizada = (DATA.movimentacoes||[]).filter(function(x){
+      return x.tipoOp==='DESPESA' && x.status!=='ANULADO' && x.data && x.data.slice(0,7)===key && x.tipo!=='Transferência';
+    }).reduce(function(s,x){ return s+(Number(x.valor)||0); }, 0);
+
+    // Saldo Disponível
+    var saldoDisponivel = receitaPrevista - comprometido - despesaRealizada;
+
+    // Percentual Utilizado
+    var pctUtilizado = receitaPrevista > 0 ? ((comprometido + despesaRealizada) / receitaPrevista * 100) : 0;
+
+    return {
+      receitaPrevista: receitaPrevista,
+      receitaRealizada: receitaRealizada,
+      despesaPrevista: despesaPrevista > 0 ? despesaPrevista : comprometido,
+      comprometido: comprometido,
+      saldoDisponivel: saldoDisponivel,
+      pctUtilizado: pctUtilizado,
+      despesaRealizada: despesaRealizada
+    };
+  }
+
+  function statusBadge(pct){
+    if(pct <= 70) return '<span class="pk-status-badge pk-status-positive">✅ Saudável</span>';
+    if(pct <= 90) return '<span class="pk-status-badge pk-status-warning">⚠️ Atenção</span>';
+    return '<span class="pk-status-badge pk-status-critical">🔴 Crítico</span>';
+  }
+
+  function renderPrevKpiCards(key){
+    var s = calcPrevSummary(key);
+    if(!s) return '';
+    var fmtR = window.fmtR || function(v){ return 'R$ '+(Math.round((v||0)*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var pctBar = Math.min(s.pctUtilizado, 100);
+    var barColor = s.pctUtilizado <= 70 ? 'var(--emerald)' : s.pctUtilizado <= 90 ? 'var(--amber)' : 'var(--coral)';
+
+    return '<div class="prev-kpi-grid">' +
+      '<div class="prev-kpi-item pk-receita-prev"><span class="pk-icon">📈</span><div class="pk-label">Receita Prevista</div><div class="pk-value">' + fmtR(s.receitaPrevista) + '</div><div class="pk-sub">Planejado para o mês</div></div>' +
+      '<div class="prev-kpi-item pk-receita-real"><span class="pk-icon">💰</span><div class="pk-label">Receita Realizada</div><div class="pk-value">' + fmtR(s.receitaRealizada) + '</div><div class="pk-sub">Efetivamente recebido</div>' + (s.receitaPrevista>0 ? statusBadge(s.receitaRealizada/s.receitaPrevista*100 >= 80 ? 30 : 80) : '') + '</div>' +
+      '<div class="prev-kpi-item pk-despesa-prev"><span class="pk-icon">📊</span><div class="pk-label">Despesa Prevista</div><div class="pk-value">' + fmtR(s.despesaPrevista) + '</div><div class="pk-sub">Total previsto nas categorias</div></div>' +
+      '<div class="prev-kpi-item pk-comprometido"><span class="pk-icon">💳</span><div class="pk-label">Já Comprometido</div><div class="pk-value">' + fmtR(s.comprometido) + '</div><div class="pk-sub">Contas a Pagar pendentes</div>' + statusBadge(s.pctUtilizado) + '</div>' +
+      '<div class="prev-kpi-item pk-saldo"><span class="pk-icon">🏦</span><div class="pk-label">Saldo Disponível</div><div class="pk-value">' + fmtR(s.saldoDisponivel) + '</div><div class="pk-sub">Receita − Comprometido − Realizado</div></div>' +
+      '<div class="prev-kpi-item pk-pct"><span class="pk-icon">📉</span><div class="pk-label">Percentual Utilizado</div><div class="pk-value">' + s.pctUtilizado.toFixed(1) + '%</div><div class="pk-bar"><div class="pk-bar-fill" style="width:' + pctBar + '%;background:' + barColor + ';"></div></div>' + statusBadge(s.pctUtilizado) + '</div>' +
+    '</div>';
+  }
+
+  // Wrap renderPrevisoes para injetar os cards redesenhados
+  var _origRenderPrevEtapa4 = window.renderPrevisoes;
+  window.renderPrevisoes = function(){
+    _origRenderPrevEtapa4.apply(this, arguments);
+    setTimeout(function(){
+      var c = document.getElementById('previsoesContent');
+      if(!c) return;
+      // Determinar o mês ativo
+      var keyEl = document.getElementById('prevMesEdit') || document.getElementById('prevFiltroMes');
+      var now = new Date();
+      var key = keyEl ? keyEl.value : (now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0'));
+      // Remover cards antigos (prevKpiRow) para não duplicar
+      var old = document.getElementById('prevKpiRow');
+      if(old) old.remove();
+      var oldNew = document.getElementById('prevKpiCardsV7');
+      if(oldNew) oldNew.remove();
+      // Inserir novos cards no topo
+      var wrapper = document.createElement('div');
+      wrapper.id = 'prevKpiCardsV7';
+      wrapper.innerHTML = renderPrevKpiCards(key);
+      var firstChild = c.children[0];
+      if(firstChild && firstChild.nextSibling) {
+        c.insertBefore(wrapper, firstChild.nextSibling);
+      } else {
+        c.insertBefore(wrapper, c.firstChild);
+      }
+    }, 200);
+  };
+
+  // ================================================================
+  // ETAPA 5: CDB CONTROL — PERSISTÊNCIA NO SUPABASE
+  // Integração bidirecional usando o snapshot que já existe em DATA.cdbControl
+  // ================================================================
+
+  // O CDB Control já é integrado ao backup/restore via _cdbControlBackupBridge
+  // e ao Supabase via o patch em save() que inclui DATA.cdbControl no snapshot.
+  // Aqui adicionamos a sincronização explícita com tabelas dedicadas no Supabase.
+
+  function cdbSyncToSupabase(){
+    if(!window._sbSession || !window.SUPABASE_URL || !window.SUPABASE_KEY) return;
+    var DATA = window.DATA;
+    if(!DATA || !DATA.cdbControl) return;
+
+    var userId = window._sbSession.user.id;
+    var headers = {
+      'Content-Type': 'application/json',
+      'apikey': window.SUPABASE_KEY,
+      'Authorization': 'Bearer ' + window._sbSession.access_token,
+      'Prefer': 'resolution=merge-duplicates'
+    };
+
+    // Upsert CDB Control data as a dedicated snapshot
+    var body = JSON.stringify({
+      user_id: userId,
+      module: 'cdb_control',
+      data: JSON.stringify(DATA.cdbControl),
+      updated_at: new Date().toISOString()
+    });
+
+    fetch(window.SUPABASE_URL + '/rest/v1/nexus_snapshots', {
+      method: 'POST',
+      headers: headers,
+      body: body
+    }).catch(function(err){
+      console.warn('[CDB Supabase Sync] Falha ao sincronizar:', err);
+    });
+  }
+
+  // Sincronizar CDB Control a cada 2 minutos se houver sessão Supabase
+  setInterval(function(){
+    if(window._sbSession && window.DATA && window.DATA.cdbControl){
+      cdbSyncToSupabase();
+    }
+  }, 120000);
+
+  // ================================================================
+  // ETAPA 1 & 6: AUDITORIA + TESTES AUTOMÁTICOS
+  // Verifica consistência entre módulos ao iniciar
+  // ================================================================
+
+  function auditoriaConsistencia(){
+    var DATA = window.DATA;
+    if(!DATA) return;
+    var erros = [];
+
+    // 1. Verificar categorias em Previsões que não existem em Tipos
+    (DATA.previsoes||[]).forEach(function(p){
+      var tipoExiste = (DATA.tipos||[]).some(function(t){ return t.nome === p.tipo; });
+      if(!tipoExiste && p.tipo){
+        erros.push('Previsão com categoria inexistente: ' + p.tipo);
+      }
+    });
+
+    // 2. Verificar IDs duplicados em pagar
+    var idsPagar = {};
+    (DATA.pagar||[]).forEach(function(p){
+      if(idsPagar[p.id]) erros.push('ID duplicado em Contas a Pagar: ' + p.id);
+      idsPagar[p.id] = true;
+    });
+
+    // 3. Verificar IDs duplicados em movimentacoes
+    var idsMov = {};
+    (DATA.movimentacoes||[]).forEach(function(m){
+      if(idsMov[m.id]) erros.push('ID duplicado em Movimentações: ' + m.id);
+      idsMov[m.id] = true;
+    });
+
+    // 4. Verificar contas referenciadas que não existem
+    (DATA.movimentacoes||[]).forEach(function(m){
+      if(m.contaId){
+        var contaExiste = (DATA.contas||[]).some(function(c){ return c.id === m.contaId; });
+        if(!contaExiste) erros.push('Movimentação referencia conta inexistente: ' + m.contaId);
+      }
+    });
+
+    if(erros.length > 0){
+      console.warn('⚠️ NEXUS ONE — Auditoria encontrou ' + erros.length + ' inconsistência(s):');
+      erros.forEach(function(e){ console.warn('  · ' + e); });
+    } else {
+      console.log('✅ NEXUS ONE — Auditoria: todos os módulos consistentes.');
+    }
+
+    return erros;
+  }
+
+  // Executar auditoria após carregamento
+  setTimeout(auditoriaConsistencia, 2000);
+
+  console.log('✓ NEXUS ONE — Etapas 2-6: Auditoria + Comprometido corrigido + Integração entre módulos + Cards Previsões redesenhados + CDB Supabase sync.');
 })();
 </script>
 </body>
