@@ -5890,7 +5890,7 @@ function renderPagar(){
     <input id="pfBusca" placeholder="🔍 Buscar..." style="min-width:200px;" oninput="filtrarPagar()">
     <input id="pfDtIni" type="date" onchange="filtrarPagar()">
     <input id="pfDtFim" type="date" onchange="filtrarPagar()">
-    <select id="pfStatus" onchange="filtrarPagar()"><option value="">Todos os status</option><option value="PENDENTE" selected>Pendente</option><option value="PAGO">Pago</option></select>
+    <select id="pfStatus" onchange="filtrarPagar()"><option value="">Todos os status</option><option value="PENDENTE" selected>Pendente</option><option value="PARCIAL">Parcial</option><option value="PAGO">Pago</option></select>
 
     <select id="pfDespTipo" onchange="filtrarPagar()"><option value="">Fixa + Variável</option><option value="fixa">📌 Somente Fixas</option><option value="variavel">📊 Somente Variáveis</option></select>
     <select id="pfTipo" onchange="atualizarFiltroSubtipoPagar();filtrarPagar()"><option value="">Todos os tipos</option>${DATA.tipos.filter(t=>t.classificacao==='DESPESA').map(t=>`<option>${esc(t.nome)}</option>`).join('')}</select>
@@ -5949,10 +5949,17 @@ function filtrarPagar(filtroExtra=''){
   list.forEach(p=>{
     let stBadge,cls='';
     if(p.status==='PAGO'){stBadge=`<span class="badge bg-emerald">PAGO</span>`;cls='row-paid';}
+    else if(p.status==='PARCIAL'){stBadge=`<span class="badge" style="background:rgba(155,109,255,.15);color:var(--violet);border:1px solid rgba(155,109,255,.3);">PARCIAL</span>`;cls='row-today';}
     else if(p.vencimento<hojeStr){stBadge=`<span class="badge bg-coral">VENCIDA</span>`;cls='row-overdue';}
     else if(p.vencimento===hojeStr){stBadge=`<span class="badge bg-amber">HOJE</span>`;cls='row-today';}
     else stBadge=`<span class="badge bg-gray">PENDENTE</span>`;
     const dtBadge=(p.despesaTipo||'fixa')==='fixa'?`<span class="badge badge-fixa">📌 Fixa</span>`:`<span class="badge badge-variavel">📊 Var.</span>`;
+    // Exibir valor original e saldo pendente quando parcial
+    const valorOrigP = p.valorOriginal||p.valor;
+    const totalPagoP = (p.pagamentosParciais||[]).reduce((s,x)=>s+x.valor,0);
+    const valorExibP = p.status==='PARCIAL'
+      ? `<span style="font-size:9px;color:var(--text3);display:block;">Orig: ${fmtR(valorOrigP)}</span><span class="mono c-coral">${fmtR(p.valor)}</span>`
+      : `<span class="mono c-coral">${fmtR(p.valor)}</span>`;
     h+=`<tr class="${cls}">
       <td style="font-size:9px;color:var(--text3);font-family:monospace;">${(p.id||'').substr(-8)||'—'}</td>
       <td style="white-space:nowrap;">${fmtD(p.vencimento)}</td>
@@ -5961,10 +5968,10 @@ function filtrarPagar(filtroExtra=''){
       <td style="font-size:10px;">${p.subtipo?`<span class="subtipo-tag">${esc(p.subtipo)}</span>`:`<span style="color:var(--text4);">—</span>`}</td>
       <td>${dtBadge}</td>
       <td style="font-size:11px;color:var(--text2);">${esc(p.fornecedor||'—')}</td>
-      <td class="mono c-coral" style="text-align:right;font-weight:600;">${fmtR(p.valor)}</td>
+      <td style="text-align:right;font-weight:600;">${valorExibP}</td>
       <td>${stBadge}</td>
       <td style="white-space:nowrap;">
-        ${p.status!=='PAGO'?`<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar('${p.id}')">✓ Baixa</button> `:''}
+        ${p.status!=='PAGO'?`<button class="btn btn-xs btn-emerald" onclick="darBaixaPagar('${p.id}')">${p.status==='PARCIAL'?'✓ + Baixa':'✓ Baixa'}</button> `:''}
         <button class="btn btn-xs btn-edit" onclick="editarPagar('${p.id}')">✏</button>
         <button class="btn btn-xs btn-dup" onclick="duplicarPagar('${p.id}')" title="Duplicar Movimento">⧉</button>
         <button class="btn btn-xs btn-danger" onclick="excluirPagar('${p.id}')">🗑</button>
@@ -6075,24 +6082,87 @@ function modalParcelamentoPagar(){
 function darBaixaPagar(id){
   const p=DATA.pagar.find(x=>x.id===id); if(!p) return;
   if(!DATA.contas.length) return toast('⚠️ Crie uma conta antes','var(--amber)');
+  // Calcular saldo pendente (valor original - soma das baixas parciais já feitas)
+  const valorOrig = p.valorOriginal || p.valor;
+  const totalPago = (p.pagamentosParciais||[]).reduce((s,x)=>s+x.valor,0);
+  const saldoPend = valorOrig - totalPago;
   const h=`
-  <div class="info-block success">✅ Pagamento: <strong>${esc(p.descricao)}</strong> — <strong>${fmtR(p.valor)}</strong></div>
+  <div class="info-block success">✅ Pagamento: <strong>${esc(p.descricao)}</strong></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+    <div style="flex:1;min-width:120px;padding:10px;background:rgba(255,77,106,.08);border:1px solid rgba(255,77,106,.2);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--coral);font-weight:700;">Valor Original</div>
+      <div style="font-size:18px;font-weight:800;color:var(--coral);">${fmtR(valorOrig)}</div>
+    </div>
+    <div style="flex:1;min-width:120px;padding:10px;background:rgba(0,229,160,.08);border:1px solid rgba(0,229,160,.2);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--emerald);font-weight:700;">Já Pago</div>
+      <div style="font-size:18px;font-weight:800;color:var(--emerald);">${fmtR(totalPago)}</div>
+    </div>
+    <div style="flex:1;min-width:120px;padding:10px;background:rgba(255,184,48,.08);border:1px solid rgba(255,184,48,.2);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--amber);font-weight:700;">Saldo Pendente</div>
+      <div style="font-size:18px;font-weight:800;color:var(--amber);">${fmtR(saldoPend)}</div>
+    </div>
+  </div>
   <div class="mrow">
     <div><label>Conta de Débito</label><select id="bxConta">${DATA.contas.map(c=>`<option value="${c.id}">${esc(c.emoji||'')} ${esc(c.nome)}</option>`).join('')}</select></div>
     <div><label>Data Pagamento</label><input id="bxDt" type="date" value="${hoje()}"></div>
   </div>
-  <div class="mrow single"><div><label>Valor Pago R$ (pode divergir)</label><input id="bxVal" type="number" step="0.01" value="${p.valor}"></div></div>`;
+  <div class="mrow">
+    <div><label>Valor a Pagar Agora R$</label><input id="bxVal" type="number" step="0.01" value="${saldoPend.toFixed(2)}" oninput="bxAtualizarSaldo(this.value,${saldoPend})"></div>
+    <div><label>Tipo de Baixa</label><select id="bxTipoBaixa">
+      <option value="total" ${saldoPend===valorOrig?'selected':''}>Total (quitação)</option>
+      <option value="parcial" ${totalPago>0&&saldoPend>0?'selected':''}>Parcial</option>
+    </select></div>
+  </div>
+  <div id="bxSaldoInfo" style="font-size:11px;color:var(--text3);padding:6px 10px;background:var(--surface2);border-radius:6px;margin-top:4px;">
+    Saldo após este pagamento: <strong>${fmtR(0)}</strong>
+  </div>
+  ${(p.pagamentosParciais||[]).length?`<div style="margin-top:12px;font-size:11px;color:var(--text3);">
+    <strong>Histórico de pagamentos:</strong><br>
+    ${(p.pagamentosParciais||[]).map(x=>`• ${fmtD(x.data)} — ${fmtR(x.valor)}`).join('<br>')}
+  </div>`:''}`;
+
   openModal('Dar Baixa — Pagamento','✅',h,()=>{
-    p.status='PAGO'; p.dataPagamento=document.getElementById('bxDt').value;
-    p.valorPago=parseFloat(document.getElementById('bxVal').value)||p.valor;
+    const valPago = parseFloat(document.getElementById('bxVal').value)||0;
+    if(valPago<=0){ toast('⚠️ Informe um valor válido','var(--amber)'); return; }
+    if(valPago>saldoPend+0.001){ toast('⚠️ Valor excede o saldo pendente de '+fmtR(saldoPend),'var(--amber)'); return; }
+    const dtPgto = document.getElementById('bxDt').value;
+    const contaId = document.getElementById('bxConta').value;
+    const ehTotal = valPago >= saldoPend - 0.001;
+    // Preservar valor original no primeiro pagamento
+    if(!p.valorOriginal) p.valorOriginal = p.valor;
+    // Registrar no histórico parcial
+    if(!p.pagamentosParciais) p.pagamentosParciais = [];
+    p.pagamentosParciais.push({data:dtPgto, valor:valPago, contaId});
+    // Atualizar status e saldo
+    if(ehTotal){
+      p.status='PAGO';
+      p.dataPagamento=dtPgto;
+      p.valorPago=valorOrig;
+    } else {
+      p.status='PARCIAL';
+      p.valorPago=(totalPago+valPago);
+    }
+    p.valor = Math.max(0, valorOrig - (totalPago+valPago));
+    // Movimentação financeira
     DATA.movimentacoes.push({
-      id:genId('MOV'),contaId:document.getElementById('bxConta').value,
-      tipoOp:'DESPESA',data:p.dataPagamento,descricao:'Pgto: '+(p.descricao||''),
-      tipo:p.tipo||'Pagamento',subtipo:p.subtipo||'',valor:p.valorPago,status:'ATIVO',criadoEm:new Date().toISOString(),
-      pagarId:p.id
+      id:genId('MOV'),contaId,
+      tipoOp:'DESPESA',data:dtPgto,
+      descricao:(ehTotal?'Pgto: ':'Pgto Parcial: ')+(p.descricao||''),
+      tipo:p.tipo||'Pagamento',subtipo:p.subtipo||'',
+      valor:valPago,status:'ATIVO',criadoEm:new Date().toISOString(),pagarId:p.id
     });
-    save(true); renderPagar(); checkAlerts(); toast('✅ Baixa registrada'); closeAllModals();
+    save(true); renderPagar(); checkAlerts();
+    toast(ehTotal?'✅ Baixa total registrada':'✅ Baixa parcial registrada — Saldo: '+fmtR(Math.max(0,saldoPend-valPago)));
+    closeAllModals();
   });
+  // Atualizar saldo ao digitar
+  window.bxAtualizarSaldo = function(val,saldoAtual){
+    const v=parseFloat(val)||0;
+    const restante=Math.max(0,saldoAtual-v);
+    const el=document.getElementById('bxSaldoInfo');
+    if(el) el.innerHTML='Saldo após este pagamento: <strong style="color:'+(restante>0?'var(--amber)':'var(--emerald)')+';">'+fmtR(restante)+'</strong>';
+  };
+  setTimeout(function(){ window.bxAtualizarSaldo(saldoPend,saldoPend); },80);
 }
 
 function editarPagar(id){
@@ -6150,7 +6220,7 @@ function renderReceber(){
     <input id="rfBusca" placeholder="🔍 Buscar..." style="min-width:200px;" oninput="filtrarReceber()">
     <input id="rfDtIni" type="date" onchange="filtrarReceber()">
     <input id="rfDtFim" type="date" onchange="filtrarReceber()">
-    <select id="rfStatus" onchange="filtrarReceber()"><option value="">Todos</option><option value="PENDENTE" selected>Pendente</option><option value="RECEBIDO">Recebido</option></select>
+    <select id="rfStatus" onchange="filtrarReceber()"><option value="">Todos</option><option value="PENDENTE" selected>Pendente</option><option value="PARCIAL">Parcial</option><option value="RECEBIDO">Recebido</option></select>
     <select id="rfTipo" onchange="atualizarFiltroSubtipoReceber();filtrarReceber()"><option value="">Todos os tipos</option>${DATA.tipos.filter(t=>t.classificacao==='RECEITA').map(t=>`<option>${esc(t.nome)}</option>`).join('')}</select>
     <select id="rfSubtipo" onchange="filtrarReceber()" style="display:none"><option value="">Todos os subtipos</option></select>
     <button class="btn btn-sm" onclick="limparFiltrosReceber()">✕ Limpar</button>`;
@@ -6182,9 +6252,14 @@ function filtrarReceber(){
   list.forEach(r=>{
     let stBadge,cls='';
     if(r.status==='RECEBIDO'){stBadge=`<span class="badge bg-emerald">RECEBIDO</span>`;cls='row-paid';}
+    else if(r.status==='PARCIAL'){stBadge=`<span class="badge" style="background:rgba(155,109,255,.15);color:var(--violet);border:1px solid rgba(155,109,255,.3);">PARCIAL</span>`;cls='row-today';}
     else if(r.vencimento<hojeStr){stBadge=`<span class="badge bg-coral">ATRASO</span>`;cls='row-overdue';}
     else if(r.vencimento===hojeStr){stBadge=`<span class="badge bg-amber">HOJE</span>`;cls='row-today';}
     else stBadge=`<span class="badge bg-gray">PENDENTE</span>`;
+    const valorOrigR = r.valorOriginal||r.valor;
+    const valorExibR = r.status==='PARCIAL'
+      ? `<span style="font-size:9px;color:var(--text3);display:block;">Orig: ${fmtR(valorOrigR)}</span><span class="mono c-emerald">${fmtR(r.valor)}</span>`
+      : `<span class="mono c-emerald">${fmtR(r.valor)}</span>`;
     h+=`<tr class="${cls}">
       <td style="font-size:9px;color:var(--text3);font-family:monospace;">${(r.id||'').substr(-8)}</td>
       <td>${fmtD(r.vencimento)}</td>
@@ -6192,10 +6267,10 @@ function filtrarReceber(){
       <td style="font-size:11px;color:var(--text2);">${esc(r.tipo||'—')}</td>
       <td style="font-size:10px;">${r.subtipo?`<span class="subtipo-tag" style="background:rgba(0,229,160,.1);color:var(--emerald);border-color:rgba(0,229,160,.2);">${esc(r.subtipo)}</span>`:`<span style="color:var(--text4);">—</span>`}</td>
       <td style="font-size:11px;color:var(--text2);">${esc(r.devedor||'—')}</td>
-      <td class="mono c-emerald" style="text-align:right;font-weight:600;">${fmtR(r.valor)}</td>
+      <td style="text-align:right;font-weight:600;">${valorExibR}</td>
       <td>${stBadge}</td>
       <td style="white-space:nowrap;">
-        ${r.status!=='RECEBIDO'?`<button class="btn btn-xs btn-primary" onclick="darBaixaReceber('${r.id}')">✓ Baixa</button> `:''}
+        ${r.status!=='RECEBIDO'?`<button class="btn btn-xs btn-primary" onclick="darBaixaReceber('${r.id}')">${r.status==='PARCIAL'?'✓ + Baixa':'✓ Baixa'}</button> `:''}
         <button class="btn btn-xs btn-edit" onclick="editarReceber('${r.id}')">✏</button>
         <button class="btn btn-xs btn-dup" onclick="duplicarReceber('${r.id}')" title="Duplicar Movimento">⧉</button>
         <button class="btn btn-xs btn-danger" onclick="excluirReceber('${r.id}')">🗑</button>
@@ -6289,19 +6364,79 @@ function modalParcelamentoReceber(){
 function darBaixaReceber(id){
   const r=DATA.receber.find(x=>x.id===id); if(!r) return;
   if(!DATA.contas.length) return toast('⚠️ Crie uma conta antes','var(--amber)');
+  const valorOrig = r.valorOriginal || r.valor;
+  const totalReceb = (r.recebimentosParciais||[]).reduce((s,x)=>s+x.valor,0);
+  const saldoPend  = valorOrig - totalReceb;
   const h=`
-  <div class="info-block success">✅ Recebimento: <strong>${esc(r.descricao)}</strong> — <strong>${fmtR(r.valor)}</strong></div>
+  <div class="info-block success">✅ Recebimento: <strong>${esc(r.descricao)}</strong></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+    <div style="flex:1;min-width:120px;padding:10px;background:rgba(56,205,255,.08);border:1px solid rgba(56,205,255,.2);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--sky);font-weight:700;">Valor Original</div>
+      <div style="font-size:18px;font-weight:800;color:var(--sky);">${fmtR(valorOrig)}</div>
+    </div>
+    <div style="flex:1;min-width:120px;padding:10px;background:rgba(0,229,160,.08);border:1px solid rgba(0,229,160,.2);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--emerald);font-weight:700;">Já Recebido</div>
+      <div style="font-size:18px;font-weight:800;color:var(--emerald);">${fmtR(totalReceb)}</div>
+    </div>
+    <div style="flex:1;min-width:120px;padding:10px;background:rgba(255,184,48,.08);border:1px solid rgba(255,184,48,.2);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--amber);font-weight:700;">Saldo Pendente</div>
+      <div style="font-size:18px;font-weight:800;color:var(--amber);">${fmtR(saldoPend)}</div>
+    </div>
+  </div>
   <div class="mrow">
     <div><label>Conta de Crédito</label><select id="brConta">${DATA.contas.map(c=>`<option value="${c.id}">${esc(c.emoji||'')} ${esc(c.nome)}</option>`).join('')}</select></div>
     <div><label>Data Recebimento</label><input id="brDt" type="date" value="${hoje()}"></div>
   </div>
-  <div class="mrow single"><div><label>Valor Recebido R$</label><input id="brVal" type="number" step="0.01" value="${r.valor}"></div></div>`;
+  <div class="mrow">
+    <div><label>Valor a Receber Agora R$</label><input id="brVal" type="number" step="0.01" value="${saldoPend.toFixed(2)}" oninput="brAtualizarSaldo(this.value,${saldoPend})"></div>
+    <div><label>Tipo de Baixa</label><select id="brTipoBaixa">
+      <option value="total" ${saldoPend===valorOrig?'selected':''}>Total (quitação)</option>
+      <option value="parcial" ${totalReceb>0&&saldoPend>0?'selected':''}>Parcial</option>
+    </select></div>
+  </div>
+  <div id="brSaldoInfo" style="font-size:11px;color:var(--text3);padding:6px 10px;background:var(--surface2);border-radius:6px;margin-top:4px;">
+    Saldo após este recebimento: <strong>${fmtR(0)}</strong>
+  </div>
+  ${(r.recebimentosParciais||[]).length?`<div style="margin-top:12px;font-size:11px;color:var(--text3);">
+    <strong>Histórico de recebimentos:</strong><br>
+    ${(r.recebimentosParciais||[]).map(x=>`• ${fmtD(x.data)} — ${fmtR(x.valor)}`).join('<br>')}
+  </div>`:''}`;
   openModal('Confirmar Recebimento','✅',h,()=>{
-    r.status='RECEBIDO'; r.dataRecebimento=document.getElementById('brDt').value;
-    r.valorRecebido=parseFloat(document.getElementById('brVal').value)||r.valor;
-    DATA.movimentacoes.push({id:genId('MOV'),contaId:document.getElementById('brConta').value,tipoOp:'RECEITA',data:r.dataRecebimento,descricao:'Recebimento: '+(r.descricao||''),tipo:r.tipo||'Receita',subtipo:r.subtipo||'',valor:r.valorRecebido,status:'ATIVO',criadoEm:new Date().toISOString()});
-    save(true); renderReceber(); toast('✅ Recebimento confirmado'); closeAllModals();
+    const valReceb = parseFloat(document.getElementById('brVal').value)||0;
+    if(valReceb<=0){ toast('⚠️ Informe um valor válido','var(--amber)'); return; }
+    if(valReceb>saldoPend+0.001){ toast('⚠️ Valor excede o saldo pendente de '+fmtR(saldoPend),'var(--amber)'); return; }
+    const dtReceb = document.getElementById('brDt').value;
+    const contaId = document.getElementById('brConta').value;
+    const ehTotal = valReceb >= saldoPend - 0.001;
+    if(!r.valorOriginal) r.valorOriginal = r.valor;
+    if(!r.recebimentosParciais) r.recebimentosParciais = [];
+    r.recebimentosParciais.push({data:dtReceb, valor:valReceb, contaId});
+    if(ehTotal){
+      r.status='RECEBIDO';
+      r.dataRecebimento=dtReceb;
+      r.valorRecebido=valorOrig;
+    } else {
+      r.status='PARCIAL';
+      r.valorRecebido=(totalReceb+valReceb);
+    }
+    r.valor = Math.max(0, valorOrig - (totalReceb+valReceb));
+    DATA.movimentacoes.push({
+      id:genId('MOV'),contaId,tipoOp:'RECEITA',data:dtReceb,
+      descricao:(ehTotal?'Recebimento: ':'Recebimento Parcial: ')+(r.descricao||''),
+      tipo:r.tipo||'Receita',subtipo:r.subtipo||'',
+      valor:valReceb,status:'ATIVO',criadoEm:new Date().toISOString(),receberId:r.id
+    });
+    save(true); renderReceber();
+    toast(ehTotal?'✅ Recebimento total confirmado':'✅ Recebimento parcial — Saldo: '+fmtR(Math.max(0,saldoPend-valReceb)));
+    closeAllModals();
   });
+  window.brAtualizarSaldo = function(val,saldoAtual){
+    const v=parseFloat(val)||0;
+    const restante=Math.max(0,saldoAtual-v);
+    const el=document.getElementById('brSaldoInfo');
+    if(el) el.innerHTML='Saldo após este recebimento: <strong style="color:'+(restante>0?'var(--amber)':'var(--emerald)')+';">'+fmtR(restante)+'</strong>';
+  };
+  setTimeout(function(){ window.brAtualizarSaldo(saldoPend,saldoPend); },80);
 }
 
 function editarReceber(id){
@@ -9423,7 +9558,7 @@ if(typeof modalGasto !== 'undefined'){
 // ================================================================
 var _pagPagar = 1;
 var _pagReceber = 1;
-var _PAGE_SIZE = 10;
+var _PAGE_SIZE = 30; // [ALT-01] Alterado de 10 para 30 registros por página
 
 function renderPaginacao(total, pagAtual, onChangeFn, containerId){
   var totalPags = Math.max(1, Math.ceil(total / _PAGE_SIZE));
@@ -10780,69 +10915,394 @@ console.log('  ✓ [v7-9] Padronização visual de tabelas (sombras, totais, cor
 //        Causa: ponto-e-vírgula espúrio dentro da concatenação de string
 //        na linha de "Compromissos Líquidos" interrompia o innerHTML
 //        prematuramente. Removido o ; incorreto — todas as linhas aparecem.
-// [BF-3] MÓDULO CONTAS: paginação no extrato de movimentações (10 por página)
-//        Implementado no padrão dos módulos A Pagar e A Receber.
 // ================================================================
+// [ALT-CONTAS-v3] MÓDULO CONTAS — filtro categoria, seleção com
+//   painel de resumo em tempo real e PDF completo conforme spec
+// ================================================================
+(function patchContasPaginacaoV2(){
+  'use strict';
 
-// ================================================================
-// [BF-3] PAGINAÇÃO — MÓDULO CONTAS (extrato de movimentações)
-// ================================================================
-(function patchContasPaginacao(){
-  // Estado de paginação por conta (resetado ao trocar de conta)
-  var _pagContas = 1;
+  /* ── Estado interno ── */
+  var _pagContas        = 1;
   var _contaSelAnterior = null;
 
-  // Expõe função de troca de página globalmente
+  window._cdFiltroBusca2    = '';
+  window._cdFiltroDtIni2    = '';
+  window._cdFiltroDtFim2    = '';
+  window._cdFiltroCateg     = '';
+  window._cdFiltroFormaPg2  = '';
+  window._cdSelecionados    = {};   // { [movId]: true|false }
+
+  /* ── Paginação ── */
   window.setPagContas = function(p){
     _pagContas = p;
     if(typeof contaSel !== 'undefined') renderContaDetail(contaSel);
   };
 
-  // Guarda referência à função original
+  /* ── Leitura e aplicação dos filtros ── */
+  window.filtrarContaV2 = function(){
+    var elBusca = document.getElementById('cdv2Busca');
+    var elIni   = document.getElementById('cdv2DtIni');
+    var elFim   = document.getElementById('cdv2DtFim');
+    var elCateg = document.getElementById('cdv2Categ');
+    var elForma = document.getElementById('cdv2FormaPg');
+    window._cdFiltroBusca2   = elBusca  ? elBusca.value  : '';
+    window._cdFiltroDtIni2   = elIni    ? elIni.value    : '';
+    window._cdFiltroDtFim2   = elFim    ? elFim.value    : '';
+    window._cdFiltroCateg    = elCateg  ? elCateg.value  : '';
+    window._cdFiltroFormaPg2 = elForma  ? elForma.value  : '';
+    _pagContas = 1;
+    // Manter seleção ao filtrar (não limpar)
+    if(typeof contaSel !== 'undefined') renderContaDetail(contaSel);
+  };
+
+  window.limparFiltrosContaV2 = function(){
+    window._cdFiltroBusca2 = window._cdFiltroDtIni2 = window._cdFiltroDtFim2 = '';
+    window._cdFiltroCateg  = window._cdFiltroFormaPg2 = '';
+    window._cdSelecionados = {};
+    _pagContas = 1;
+    ['cdv2Busca','cdv2DtIni','cdv2DtFim','cdv2Categ','cdv2FormaPg'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.value = '';
+    });
+    if(typeof contaSel !== 'undefined') renderContaDetail(contaSel);
+  };
+
+  /* ── Selecionar / desselecionar todos ── */
+  window.cdSelectAll = function(chk){
+    var cbs = document.querySelectorAll('.cd-chk-row');
+    cbs.forEach(function(cb){
+      cb.checked = chk.checked;
+      window._cdSelecionados[cb.dataset.id] = chk.checked;
+    });
+    _atualizarPainelSel();
+  };
+
+  window.cdToggleSel = function(cb){
+    window._cdSelecionados[cb.dataset.id] = cb.checked;
+    // Sincronizar "Selecionar Todos"
+    var todos = document.querySelectorAll('.cd-chk-row');
+    var chkAll = document.getElementById('cdChkAll');
+    if(chkAll) chkAll.checked = todos.length > 0 && Array.from(todos).every(function(c){ return c.checked; });
+    _atualizarPainelSel();
+  };
+
+  /* ── Atualizar painel de resumo de seleção em tempo real ── */
+  function _atualizarPainelSel(){
+    var painel = document.getElementById('cdPainelSel');
+    if(!painel) return;
+    var ids = Object.keys(window._cdSelecionados).filter(function(k){ return window._cdSelecionados[k]; });
+    var total = 0;
+    ids.forEach(function(id){
+      var m = (DATA.movimentacoes||[]).find(function(x){ return x.id === id; });
+      if(m && m.status !== 'ANULADO') total += (Number(m.valor) || 0);
+    });
+    var spanQtd = document.getElementById('cdSelQtd');
+    var spanTot = document.getElementById('cdSelTot');
+    if(spanQtd) spanQtd.textContent = ids.length;
+    if(spanTot) spanTot.textContent = fmtR(total);
+    // Destaque visual quando há seleção
+    painel.style.borderColor = ids.length > 0 ? 'var(--sky)' : 'var(--border)';
+    painel.style.background  = ids.length > 0 ? 'rgba(56,205,255,.06)' : 'var(--surface2)';
+  }
+
+  /* ── Gerar PDF ── */
+  window.gerarPdfContas = function(){
+    if(typeof contaSel === 'undefined' || !contaSel){
+      showToast('Selecione uma conta primeiro', 'var(--amber)'); return;
+    }
+    var ids = Object.keys(window._cdSelecionados || {}).filter(function(k){ return window._cdSelecionados[k]; });
+    _buildPdf(contaSel, ids.length > 0 ? ids : null);
+  };
+
+  /* ── Filtro interno ── */
+  function _filtrarMovs(id){
+    var showAnul = window._showAnul || false;
+    var busca    = (window._cdFiltroBusca2 || '').toLowerCase().trim();
+    var dtIni    = window._cdFiltroDtIni2  || '';
+    var dtFim    = window._cdFiltroDtFim2  || '';
+    var categ    = window._cdFiltroCateg   || '';
+    var forma    = window._cdFiltroFormaPg2|| '';
+
+    return (DATA.movimentacoes || [])
+      .filter(function(m){
+        if(m.contaId !== id || m.tipo === 'Transferência') return false;
+        if(!showAnul && m.status === 'ANULADO')            return false;
+        if(dtIni && m.data < dtIni)                        return false;
+        if(dtFim && m.data > dtFim)                        return false;
+        if(categ && m.tipo !== categ)                      return false;
+        if(forma && (m.formaPagamento || '') !== forma)    return false;
+        if(busca){
+          var haystack = [m.descricao, m.tipo, m.subtipo, m.formaPagamento, m.fornecedor]
+            .join(' ').toLowerCase();
+          if(haystack.indexOf(busca) === -1) return false;
+        }
+        return true;
+      })
+      .sort(function(a, b){ return b.data.localeCompare(a.data); });
+  }
+
+  /* ── Gerador de PDF ── */
+  function _buildPdf(id, idsSelArr){
+    var c = (DATA.contas || []).find(function(x){ return x.id === id; });
+    if(!c) return;
+
+    var movsFull = _filtrarMovs(id);
+    var movs     = idsSelArr
+      ? movsFull.filter(function(m){ return idsSelArr.indexOf(m.id) !== -1; })
+      : movsFull;
+
+    if(!movs.length){
+      showToast('Nenhum registro para gerar o PDF com os filtros atuais', 'var(--amber)');
+      return;
+    }
+
+    /* Totais */
+    var totalEnt = movs.filter(function(m){ return m.tipoOp === 'RECEITA'; })
+                       .reduce(function(s,m){ return s + (Number(m.valor)||0); }, 0);
+    var totalSai = movs.filter(function(m){ return m.tipoOp === 'DESPESA'; })
+                       .reduce(function(s,m){ return s + (Number(m.valor)||0); }, 0);
+    var saldoLiq = totalEnt - totalSai;
+
+    /* Totais dos selecionados (se houver) */
+    var totalSel = 0;
+    if(idsSelArr && idsSelArr.length){
+      totalSel = movs.reduce(function(s,m){ return s + (Number(m.valor)||0); }, 0);
+    }
+
+    /* Meta-informações */
+    var dtGer = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR');
+    var periodoTxt = '';
+    if(window._cdFiltroDtIni2 || window._cdFiltroDtFim2){
+      periodoTxt = (window._cdFiltroDtIni2 ? fmtD(window._cdFiltroDtIni2) : '—') +
+                   ' a ' +
+                   (window._cdFiltroDtFim2 ? fmtD(window._cdFiltroDtFim2) : '—');
+    } else {
+      periodoTxt = 'Todos os períodos';
+    }
+
+    var categTxt = window._cdFiltroCateg   || 'Todas as categorias';
+    var formaTxt = window._cdFiltroFormaPg2|| 'Todas';
+    var buscaTxt = window._cdFiltroBusca2  || '';
+
+    /* Linhas da tabela */
+    var rows = movs.map(function(m){
+      var corTipo = m.tipoOp === 'RECEITA' ? '#007a50' : '#a0002a';
+      var sinal   = m.tipoOp === 'RECEITA' ? '+' : '-';
+      return '<tr>' +
+        '<td style="white-space:nowrap;">'          + esc(fmtD(m.data))                    + '</td>' +
+        '<td style="font-weight:700;color:'+corTipo+';">' + esc(m.tipoOp||'—')             + '</td>' +
+        '<td>'                                             + esc(m.tipo||'—')               + '</td>' +
+        '<td style="font-weight:500;">'                    + esc(m.descricao||'—')          + '</td>' +
+        '<td>'                                             + esc(m.formaPagamento||'—')     + '</td>' +
+        '<td style="text-align:right;font-weight:700;color:'+corTipo+';">'+sinal+fmtR(Number(m.valor)||0)+'</td>' +
+      '</tr>';
+    }).join('');
+
+    var html =
+      '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">' +
+      '<title>Extrato — ' + esc(c.nome) + '</title>' +
+      '<style>' +
+        '*{box-sizing:border-box;margin:0;padding:0;}' +
+        'body{font-family:Arial,Helvetica,sans-serif;font-size:11.5px;color:#1b2436;padding:22px;}' +
+
+        /* Cabeçalho */
+        '.pdf-logo{display:flex;align-items:center;gap:12px;margin-bottom:4px;}' +
+        '.pdf-logo-box{width:38px;height:38px;background:linear-gradient(135deg,#ff7a00,#e05a00);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#fff;flex-shrink:0;}' +
+        '.pdf-logo-text{font-size:18px;font-weight:900;color:#0f3d3e;letter-spacing:.5px;}' +
+        '.pdf-logo-sub{font-size:10px;color:#666;letter-spacing:2px;text-transform:uppercase;}' +
+        '.pdf-hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0f3d3e;padding-bottom:10px;margin-bottom:14px;}' +
+        '.pdf-meta{font-size:10px;color:#555;text-align:right;line-height:1.7;}' +
+        '.pdf-meta strong{color:#1b2436;}' +
+
+        /* Cards de totais */
+        '.pdf-cards{display:flex;gap:10px;margin-bottom:16px;}' +
+        '.pdf-card{flex:1;padding:11px 14px;border-radius:8px;text-align:center;}' +
+        '.pdf-card .c-lbl{font-size:8.5px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:4px;}' +
+        '.pdf-card .c-val{font-size:19px;font-weight:800;}' +
+        '.pdf-card .c-sub{font-size:9.5px;margin-top:3px;color:#555;}' +
+
+        /* Tabela */
+        'table{width:100%;border-collapse:collapse;margin-bottom:16px;}' +
+        'th{background:#0f3d3e;color:#fff;padding:6px 8px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;}' +
+        'th:last-child,td:last-child{text-align:right;}' +
+        'td{border-bottom:1px solid #e8ecf4;padding:5px 8px;vertical-align:middle;}' +
+        'tbody tr:nth-child(even) td{background:#f7f9fc;}' +
+
+        /* Rodapé de totais */
+        '.pdf-footer-totals{border:1px solid #dde4f0;border-radius:8px;overflow:hidden;margin-bottom:14px;}' +
+        '.pdf-footer-totals table{margin:0;}' +
+        '.pdf-footer-totals th{background:#f0f4f8;color:#1b2436;font-size:10px;padding:7px 12px;}' +
+        '.pdf-footer-totals td{padding:6px 12px;font-size:11px;}' +
+        '.pdf-footer-totals tr:last-child td{background:#fffae8;font-weight:800;border-top:2px solid #b85c00;color:#b85c00;}' +
+
+        /* Rodapé página */
+        '.pdf-page-footer{margin-top:10px;font-size:9.5px;color:#888;border-top:1px solid #ccc;padding-top:7px;display:flex;justify-content:space-between;}' +
+
+        /* Filtros aplicados */
+        '.pdf-filtros{font-size:10.5px;color:#555;padding:7px 12px;background:#f5f7fc;border-left:3px solid #0f3d3e;border-radius:3px;margin-bottom:14px;line-height:1.8;}' +
+
+        '@page{margin:12mm;}' +
+        '@media print{body{padding:0;}}' +
+      '</style></head><body>' +
+
+      /* === CABEÇALHO === */
+      '<div class="pdf-hdr">' +
+        '<div class="pdf-logo">' +
+          '<div class="pdf-logo-box">N1</div>' +
+          '<div>' +
+            '<div class="pdf-logo-text">NEXUS ONE</div>' +
+            '<div class="pdf-logo-sub">Sistema Financeiro Pessoal</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pdf-meta">' +
+          '<strong>Conta:</strong> ' + esc(c.emoji||'🏦') + ' ' + esc(c.nome) + '<br>' +
+          '<strong>Emitido em:</strong> ' + dtGer + '<br>' +
+          '<strong>Registros:</strong> ' + movs.length + (idsSelArr ? ' (selecionados)' : ' (filtrados)') +
+        '</div>' +
+      '</div>' +
+
+      /* === FILTROS APLICADOS === */
+      '<div class="pdf-filtros">' +
+        '<strong>Período:</strong> ' + periodoTxt + '&nbsp;&nbsp;' +
+        '<strong>Categoria:</strong> ' + esc(categTxt) + '&nbsp;&nbsp;' +
+        '<strong>Forma de Pagamento:</strong> ' + esc(formaTxt) +
+        (buscaTxt ? '&nbsp;&nbsp;<strong>Busca:</strong> ' + esc(buscaTxt) : '') +
+        (idsSelArr ? '&nbsp;&nbsp;<strong style="color:#0066cc;">⚠ Somente registros selecionados</strong>' : '') +
+      '</div>' +
+
+      /* === CARDS DE TOTAIS === */
+      '<div class="pdf-cards">' +
+        '<div class="pdf-card" style="background:#e8f8f2;border:2px solid #00c47e;">' +
+          '<div class="c-lbl" style="color:#007a50;">💰 Total Receitas</div>' +
+          '<div class="c-val" style="color:#007a50;">' + fmtR(totalEnt) + '</div>' +
+          '<div class="c-sub">' + movs.filter(function(m){return m.tipoOp==='RECEITA';}).length + ' registros</div>' +
+        '</div>' +
+        '<div class="pdf-card" style="background:#fef0f2;border:2px solid #e63257;">' +
+          '<div class="c-lbl" style="color:#a0002a;">📤 Total Despesas</div>' +
+          '<div class="c-val" style="color:#a0002a;">' + fmtR(totalSai) + '</div>' +
+          '<div class="c-sub">' + movs.filter(function(m){return m.tipoOp==='DESPESA';}).length + ' registros</div>' +
+        '</div>' +
+        '<div class="pdf-card" style="background:' + (saldoLiq>=0?'#e8f8f2':'#fef0f2') + ';border:2px solid ' + (saldoLiq>=0?'#00c47e':'#e63257') + ';">' +
+          '<div class="c-lbl" style="color:' + (saldoLiq>=0?'#007a50':'#a0002a') + ';">⚖️ Saldo Líquido</div>' +
+          '<div class="c-val" style="color:' + (saldoLiq>=0?'#007a50':'#a0002a') + ';">' + (saldoLiq>=0?'+':'') + fmtR(saldoLiq) + '</div>' +
+          '<div class="c-sub">' + movs.length + ' total</div>' +
+        '</div>' +
+      '</div>' +
+
+      /* === TABELA === */
+      '<table>' +
+        '<thead><tr>' +
+          '<th>Data</th>' +
+          '<th>Tipo</th>' +
+          '<th>Categoria</th>' +
+          '<th>Descrição</th>' +
+          '<th>Forma de Pagamento</th>' +
+          '<th>Valor</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+
+      /* === RODAPÉ DE TOTAIS === */
+      '<div class="pdf-footer-totals">' +
+        '<table>' +
+          '<thead><tr><th colspan="2">Resumo Final</th></tr></thead>' +
+          '<tbody>' +
+            '<tr><td>Quantidade de registros</td><td style="text-align:right;font-weight:700;">' + movs.length + '</td></tr>' +
+            '<tr><td>Total de Receitas</td><td style="text-align:right;color:#007a50;font-weight:700;">+' + fmtR(totalEnt) + '</td></tr>' +
+            '<tr><td>Total de Despesas</td><td style="text-align:right;color:#a0002a;font-weight:700;">-' + fmtR(totalSai) + '</td></tr>' +
+            (idsSelArr && idsSelArr.length
+              ? '<tr><td>Total dos registros selecionados</td><td style="text-align:right;color:#0066cc;font-weight:700;">' + fmtR(totalSel) + '</td></tr>'
+              : '') +
+          '</tbody>' +
+          '<tfoot><tr><td>Saldo Líquido</td><td style="text-align:right;">' + (saldoLiq>=0?'+':'') + fmtR(saldoLiq) + '</td></tr></tfoot>' +
+        '</table>' +
+      '</div>' +
+
+      /* === RODAPÉ DA PÁGINA === */
+      '<div class="pdf-page-footer">' +
+        '<span>NEXUS ONE · Extrato: ' + esc(c.nome) + '</span>' +
+        '<span>' + dtGer + '</span>' +
+      '</div>' +
+
+      '<' + 'script>window.onload=function(){window.print();};</' + 'script>' +
+      '</body></html>';
+
+    var win = window.open('', '_blank');
+    if(!win){ showToast('Bloqueio de popup detectado. Permita popups para gerar PDF.', 'var(--amber)'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+
+  /* ── renderContaDetail sobrescrito ── */
   var _origRenderContaDetail = renderContaDetail;
 
-  // Sobrescreve renderContaDetail com versão paginada
   window.renderContaDetail = renderContaDetail = function(id){
-    // Resetar para página 1 ao trocar de conta
+
+    /* Reset ao trocar de conta */
     if(id !== _contaSelAnterior){
       _pagContas = 1;
       _contaSelAnterior = id;
+      window._cdFiltroBusca2 = window._cdFiltroDtIni2 = window._cdFiltroDtFim2 = '';
+      window._cdFiltroCateg  = window._cdFiltroFormaPg2 = '';
+      window._cdSelecionados = {};
     }
 
-    var c = DATA.contas.find(function(x){ return x.id===id; });
+    var c = (DATA.contas||[]).find(function(x){ return x.id === id; });
     if(!c) return;
 
-    var saldo = saldoConta(id);
+    var saldo    = saldoConta(id);
     var showAnul = window._showAnul || false;
     var showTrf  = window._showTrf  || false;
+    var movsFull = _filtrarMovs(id);
 
-    // Lista completa de movimentações
-    var movsAll = DATA.movimentacoes
-      .filter(function(m){ return m.contaId===id && m.tipo!=='Transferência'; })
-      .sort(function(a,b){ return b.data.localeCompare(a.data); });
-    var movsFull = showAnul ? movsAll : movsAll.filter(function(m){ return m.status!=='ANULADO'; });
-
-    // Transferências (sem paginação — geralmente poucos registros)
+    /* Transferências */
     var trfsOut = (DATA.transferencias||[]).filter(function(t){ return t.contaOrigemId===id  && t.status!=='ANULADO'; });
     var trfsIn  = (DATA.transferencias||[]).filter(function(t){ return t.contaDestinoId===id && t.status!=='ANULADO'; });
     var nTrfs   = trfsOut.length + trfsIn.length;
 
-    // Paginação
+    /* Totais dinâmicos dos registros filtrados */
+    var totalEnt = movsFull.filter(function(m){return m.tipoOp==='RECEITA';}).reduce(function(s,m){return s+(Number(m.valor)||0);},0);
+    var totalSai = movsFull.filter(function(m){return m.tipoOp==='DESPESA';}).reduce(function(s,m){return s+(Number(m.valor)||0);},0);
+    var saldoLiq = totalEnt - totalSai;
+
+    /* Totais da seleção */
+    var selIds   = Object.keys(window._cdSelecionados).filter(function(k){ return window._cdSelecionados[k]; });
+    var totalSel = selIds.reduce(function(s,sid){
+      var m = movsFull.find(function(x){ return x.id===sid; });
+      return s + (m ? (Number(m.valor)||0) : 0);
+    }, 0);
+
+    /* Paginação */
     var totalReg  = movsFull.length;
     var totalPags = Math.max(1, Math.ceil(totalReg / _PAGE_SIZE));
     if(_pagContas > totalPags) _pagContas = totalPags;
-    var offset = (_pagContas - 1) * _PAGE_SIZE;
+    var offset  = (_pagContas - 1) * _PAGE_SIZE;
     var movsPag = movsFull.slice(offset, offset + _PAGE_SIZE);
 
-    // Helper: badge de status de transferência
-    function trfBadge(label){
-      return '<span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.15);color:var(--violet);border:1px solid rgba(155,109,255,.3);font-weight:700;">'+label+'</span>';
+    /* Listas únicas para os dropdowns */
+    var categsUnicas = [];
+    (DATA.tipos||[]).forEach(function(t){
+      if(t.nome && categsUnicas.indexOf(t.nome) === -1) categsUnicas.push(t.nome);
+    });
+    categsUnicas.sort();
+
+    var formasUnicas = [];
+    (DATA.movimentacoes||[]).forEach(function(m){
+      if(m.contaId===id && m.formaPagamento && formasUnicas.indexOf(m.formaPagamento) === -1)
+        formasUnicas.push(m.formaPagamento);
+    });
+    formasUnicas.sort();
+
+    /* Helper badge transferência */
+    function trfBadge(lbl){
+      return '<span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.15);color:var(--violet);border:1px solid rgba(155,109,255,.3);font-weight:700;">' + lbl + '</span>';
     }
 
-    // Linhas de movimentações paginadas
+    /* Linhas de movimentações */
     var rowsMovs = '';
     if(!movsPag.length){
-      rowsMovs = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3);">Nenhuma movimentação</td></tr>';
+      rowsMovs = '<tr><td colspan="10" style="text-align:center;padding:28px;color:var(--text3);">Nenhuma movimentação encontrada</td></tr>';
     } else {
       movsPag.forEach(function(m){
         var isAnul  = m.status === 'ANULADO';
@@ -10850,115 +11310,233 @@ console.log('  ✓ [v7-9] Padronização visual de tabelas (sombras, totais, cor
         var badge   = isAnul
           ? '<span class="badge badge-anulado">ANULADO</span>'
           : '<span class="badge badge-ativo">ATIVO</span>';
-        var cor   = m.tipoOp === 'RECEITA' ? 'c-emerald' : 'c-coral';
-        var sinal = m.tipoOp === 'RECEITA' ? '+' : '-';
-        var subtipoHtml = m.subtipo
-          ? '<span class="subtipo-tag" style="'+(m.tipoOp==='RECEITA'?'background:rgba(0,229,160,.1);color:var(--emerald);border-color:rgba(0,229,160,.2);':'')+'">'+esc(m.subtipo)+'</span>'
+        var cor     = m.tipoOp === 'RECEITA' ? 'c-emerald' : 'c-coral';
+        var sinal   = m.tipoOp === 'RECEITA' ? '+' : '-';
+        var subHtml = m.subtipo
+          ? '<span class="subtipo-tag" style="' + (m.tipoOp==='RECEITA'?'background:rgba(0,229,160,.1);color:var(--emerald);border-color:rgba(0,229,160,.2);':'') + '">' + esc(m.subtipo) + '</span>'
           : '<span style="color:var(--text4);">—</span>';
+        var isSel   = window._cdSelecionados[m.id] ? 'checked' : '';
         rowsMovs +=
-          '<tr class="'+rowCls+'">' +
-          '<td style="white-space:nowrap;">'+fmtD(m.data)+'</td>' +
-          '<td><span class="badge '+(m.tipoOp==='RECEITA'?'bg-emerald':'bg-coral')+'">'+m.tipoOp+'</span></td>' +
-          '<td style="font-weight:500;">'+esc(m.descricao||'—')+'</td>' +
-          '<td style="font-size:11px;color:var(--text2);">'+esc(m.tipo||'—')+'</td>' +
-          '<td style="font-size:10px;">'+subtipoHtml+'</td>' +
-          '<td class="mono '+cor+'" style="text-align:right;font-weight:700;">'+sinal+fmtR(m.valor)+'</td>' +
-          '<td>'+badge+'</td>' +
+          '<tr class="' + rowCls + '">' +
+          '<td style="text-align:center;width:32px;padding:0 4px;">' +
+            '<input type="checkbox" class="cd-chk-row" data-id="' + m.id + '" ' + isSel + ' onchange="cdToggleSel(this)" style="cursor:pointer;width:15px;height:15px;">' +
+          '</td>' +
+          '<td style="white-space:nowrap;">' + fmtD(m.data) + '</td>' +
+          '<td><span class="badge ' + (m.tipoOp==='RECEITA'?'bg-emerald':'bg-coral') + '">' + (m.tipoOp||'—') + '</span></td>' +
+          '<td style="font-weight:500;">' + esc(m.descricao||'—') + '</td>' +
+          '<td style="font-size:11px;color:var(--text2);">' + esc(m.tipo||'—') + '</td>' +
+          '<td style="font-size:10px;">' + subHtml + '</td>' +
+          '<td style="font-size:10px;color:var(--text3);">' + esc(m.formaPagamento||'—') + '</td>' +
+          '<td class="mono ' + cor + '" style="text-align:right;font-weight:700;">' + sinal + fmtR(Number(m.valor)||0) + '</td>' +
+          '<td>' + badge + '</td>' +
           '<td style="white-space:nowrap;">' +
             (!isAnul
-              ? '<button class="btn btn-xs btn-edit" onclick="editarMovimentacao(\''+m.id+'\')">✏</button> ' +
-                '<button class="btn btn-xs btn-amber" onclick="anularMovimentacao(\''+m.id+'\')" title="Anular">⊘</button>'
+              ? '<button class="btn btn-xs btn-edit" onclick="editarMovimentacao(\'' + m.id + '\')">✏</button> ' +
+                '<button class="btn btn-xs btn-amber" onclick="anularMovimentacao(\'' + m.id + '\')" title="Anular">⊘</button>'
               : '') +
-            ' <button class="btn btn-xs btn-dup" onclick="duplicarMovimentacao(\''+m.id+'\')" title="Duplicar Movimento">⧉</button>' +
-            ' <button class="btn btn-xs btn-danger" onclick="excluirMovimentacao(\''+m.id+'\')">🗑</button>' +
+            ' <button class="btn btn-xs btn-dup" onclick="duplicarMovimentacao(\'' + m.id + '\')" title="Duplicar">⧉</button>' +
+            ' <button class="btn btn-xs btn-danger" onclick="excluirMovimentacao(\'' + m.id + '\')">🗑</button>' +
           '</td>' +
           '</tr>';
       });
     }
 
-    // Linhas de transferências (exibidas após movimentações quando toggleado)
+    /* Linhas de transferências */
     var rowsTrf = '';
     if(showTrf){
       trfsOut.forEach(function(t){
-        var dc = DATA.contas.find(function(x){ return x.id===t.contaDestinoId; });
+        var dc = (DATA.contas||[]).find(function(x){ return x.id===t.contaDestinoId; });
         rowsTrf +=
           '<tr style="background:rgba(155,109,255,.04);">' +
-          '<td style="white-space:nowrap;">'+fmtD(t.data)+'</td>' +
-          '<td>'+trfBadge('🔁 TRANSF.')+'</td>' +
-          '<td style="font-weight:500;color:var(--violet);">→ '+(dc?esc(dc.emoji||'')+' '+esc(dc.nome):'?')+' — '+esc(t.descricao||'')+'</td>' +
+          '<td></td>' +
+          '<td style="white-space:nowrap;">' + fmtD(t.data) + '</td>' +
+          '<td>' + trfBadge('🔁 TRANSF.') + '</td>' +
+          '<td style="font-weight:500;color:var(--violet);">→ ' + (dc?esc(dc.emoji||'')+' '+esc(dc.nome):'?') + ' — ' + esc(t.descricao||'') + '</td>' +
           '<td style="font-size:11px;color:var(--text3);">Transferência Interna</td>' +
           '<td><span style="color:var(--text4);">—</span></td>' +
-          '<td class="mono c-coral" style="text-align:right;font-weight:700;">-'+fmtR(t.valor)+'</td>' +
+          '<td>—</td>' +
+          '<td class="mono c-coral" style="text-align:right;font-weight:700;">-' + fmtR(t.valor) + '</td>' +
           '<td><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.08);color:var(--violet);">INTERNO</span></td>' +
-          '<td><button class="btn btn-xs btn-danger" onclick="excluirTrf(\''+t.id+'\')">🗑</button></td>' +
+          '<td><button class="btn btn-xs btn-danger" onclick="excluirTrf(\'' + t.id + '\')">🗑</button></td>' +
           '</tr>';
       });
       trfsIn.forEach(function(t){
-        var oc = DATA.contas.find(function(x){ return x.id===t.contaOrigemId; });
+        var oc = (DATA.contas||[]).find(function(x){ return x.id===t.contaOrigemId; });
         rowsTrf +=
           '<tr style="background:rgba(0,229,160,.03);">' +
-          '<td style="white-space:nowrap;">'+fmtD(t.data)+'</td>' +
-          '<td>'+trfBadge('🔁 TRANSF.')+'</td>' +
-          '<td style="font-weight:500;color:var(--emerald);">← '+(oc?esc(oc.emoji||'')+' '+esc(oc.nome):'?')+' — '+esc(t.descricao||'')+'</td>' +
+          '<td></td>' +
+          '<td style="white-space:nowrap;">' + fmtD(t.data) + '</td>' +
+          '<td>' + trfBadge('🔁 TRANSF.') + '</td>' +
+          '<td style="font-weight:500;color:var(--emerald);">← ' + (oc?esc(oc.emoji||'')+' '+esc(oc.nome):'?') + ' — ' + esc(t.descricao||'') + '</td>' +
           '<td style="font-size:11px;color:var(--text3);">Transferência Interna</td>' +
           '<td><span style="color:var(--text4);">—</span></td>' +
-          '<td class="mono c-emerald" style="text-align:right;font-weight:700;">+'+fmtR(t.valor)+'</td>' +
+          '<td>—</td>' +
+          '<td class="mono c-emerald" style="text-align:right;font-weight:700;">+' + fmtR(t.valor) + '</td>' +
           '<td><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(155,109,255,.08);color:var(--violet);">INTERNO</span></td>' +
           '<td>—</td>' +
           '</tr>';
       });
     }
 
-    // Contador info da paginação (exibido acima da tabela)
+    /* Contador de paginação */
     var infoCount = totalReg > 0
-      ? '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface2);font-size:10px;color:var(--text3);border-radius:8px 8px 0 0;">' +
-          '<span>Exibindo '+(offset+1)+' – '+Math.min(offset+_PAGE_SIZE, totalReg)+' de '+totalReg+' movimentações</span>' +
-          '<span>Página '+_pagContas+' / '+totalPags+'</span>' +
+      ? '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;background:var(--surface2);font-size:10px;color:var(--text3);border-radius:8px 8px 0 0;">' +
+          '<span>Exibindo ' + (offset+1) + ' – ' + Math.min(offset+_PAGE_SIZE,totalReg) + ' de ' + totalReg + ' movimentações</span>' +
+          '<span>Página ' + _pagContas + ' / ' + totalPags + '</span>' +
         '</div>'
       : '';
 
-    // HTML completo do detalhe
+    /* ── Montar HTML completo ── */
     document.getElementById('contaDetail').innerHTML =
-      '<div class="card" style="margin-bottom:16px;">' +
+
+      /* Cabeçalho da conta */
+      '<div class="card" style="margin-bottom:14px;">' +
         '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
-          '<div style="font-size:36px;">'+esc(c.emoji||'🏦')+'</div>' +
+          '<div style="font-size:36px;">' + esc(c.emoji||'🏦') + '</div>' +
           '<div style="flex:1;">' +
-            '<div style="font-size:18px;font-weight:800;">'+esc(c.nome)+'</div>' +
-            '<div style="font-size:11px;color:var(--text3);">'+esc(c.tipo||'')+' · Saldo inicial: '+fmtR(c.saldoInicial)+'</div>' +
+            '<div style="font-size:18px;font-weight:800;">' + esc(c.nome) + '</div>' +
+            '<div style="font-size:11px;color:var(--text3);">' + esc(c.tipo||'') + ' · Saldo inicial: ' + fmtR(c.saldoInicial) + '</div>' +
           '</div>' +
           '<div>' +
             '<div style="font-size:12px;color:var(--text3);margin-bottom:2px;">Saldo Atual</div>' +
-            '<div class="mono '+(saldo>=0?'c-emerald':'c-coral')+'" style="font-size:26px;font-weight:800;">'+fmtR(saldo)+'</div>' +
+            '<div class="mono ' + (saldo>=0?'c-emerald':'c-coral') + '" style="font-size:26px;font-weight:800;">' + fmtR(saldo) + '</div>' +
           '</div>' +
-          '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-            '<button class="btn btn-xs btn-edit" onclick="editarConta(\''+id+'\')">✏ Editar</button>' +
-            '<button class="btn btn-xs btn-danger" onclick="excluirConta(\''+id+'\')">🗑 Excluir</button>' +
+          '<div style="display:flex;gap:6px;">' +
+            '<button class="btn btn-xs btn-edit" onclick="editarConta(\'' + id + '\')">✏ Editar</button>' +
+            '<button class="btn btn-xs btn-danger" onclick="excluirConta(\'' + id + '\')">🗑 Excluir</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
 
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">' +
-        '<div class="sec-title">Extrato</div>' +
-        '<span class="show-anulados-toggle" onclick="toggleAnulados()">'+(showAnul?'Ocultar anulados':'Mostrar anulados')+'</span>' +
+      /* ── Cards de totais dinâmicos ── */
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">' +
+        '<div style="flex:1;min-width:130px;padding:10px 14px;background:rgba(0,229,160,.08);border:1px solid rgba(0,229,160,.2);border-radius:10px;">' +
+          '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:var(--emerald);font-weight:700;margin-bottom:3px;">💰 Total Entradas</div>' +
+          '<div class="mono c-emerald" style="font-size:19px;font-weight:800;">' + fmtR(totalEnt) + '</div>' +
+          '<div style="font-size:10px;color:var(--text3);">' + movsFull.filter(function(m){return m.tipoOp==='RECEITA';}).length + ' registros</div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:130px;padding:10px 14px;background:rgba(255,77,106,.08);border:1px solid rgba(255,77,106,.2);border-radius:10px;">' +
+          '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:var(--coral);font-weight:700;margin-bottom:3px;">📤 Total Saídas</div>' +
+          '<div class="mono c-coral" style="font-size:19px;font-weight:800;">' + fmtR(totalSai) + '</div>' +
+          '<div style="font-size:10px;color:var(--text3);">' + movsFull.filter(function(m){return m.tipoOp==='DESPESA';}).length + ' registros</div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:130px;padding:10px 14px;background:' + (saldoLiq>=0?'rgba(0,229,160,.08)':'rgba(255,77,106,.08)') + ';border:1px solid ' + (saldoLiq>=0?'rgba(0,229,160,.2)':'rgba(255,77,106,.2)') + ';border-radius:10px;">' +
+          '<div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:' + (saldoLiq>=0?'var(--emerald)':'var(--coral)') + ';font-weight:700;margin-bottom:3px;">⚖️ Saldo Líquido</div>' +
+          '<div class="mono ' + (saldoLiq>=0?'c-emerald':'c-coral') + '" style="font-size:19px;font-weight:800;">' + (saldoLiq>=0?'+':'') + fmtR(saldoLiq) + '</div>' +
+          '<div style="font-size:10px;color:var(--text3);">' + totalReg + ' registros filtrados</div>' +
+        '</div>' +
+      '</div>' +
+
+      /* ── Barra de filtros ── */
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding:12px;background:var(--surface2);border-radius:10px;margin-bottom:10px;">' +
+
+        /* Busca */
+        '<div style="display:flex;flex-direction:column;gap:3px;flex:2;min-width:160px;">' +
+          '<label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);font-weight:700;">🔍 Busca</label>' +
+          '<input id="cdv2Busca" placeholder="Descrição, categoria, subtipo..." value="' + esc(window._cdFiltroBusca2||'') + '" oninput="filtrarContaV2()" style="padding:7px 10px;font-size:12px;">' +
+        '</div>' +
+
+        /* Data Início */
+        '<div style="display:flex;flex-direction:column;gap:3px;">' +
+          '<label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);font-weight:700;">📅 Início</label>' +
+          '<input id="cdv2DtIni" type="date" value="' + esc(window._cdFiltroDtIni2||'') + '" onchange="filtrarContaV2()" style="padding:7px 8px;font-size:12px;">' +
+        '</div>' +
+
+        /* Data Fim */
+        '<div style="display:flex;flex-direction:column;gap:3px;">' +
+          '<label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);font-weight:700;">📅 Fim</label>' +
+          '<input id="cdv2DtFim" type="date" value="' + esc(window._cdFiltroDtFim2||'') + '" onchange="filtrarContaV2()" style="padding:7px 8px;font-size:12px;">' +
+        '</div>' +
+
+        /* Forma de Pagamento */
+        '<div style="display:flex;flex-direction:column;gap:3px;">' +
+          '<label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);font-weight:700;">💳 Forma Pagto</label>' +
+          '<select id="cdv2FormaPg" onchange="filtrarContaV2()" style="padding:7px 8px;font-size:12px;">' +
+            '<option value="">Todas</option>' +
+            formasUnicas.map(function(f){ return '<option value="' + esc(f) + '" ' + (window._cdFiltroFormaPg2===f?'selected':'') + '>' + esc(f) + '</option>'; }).join('') +
+          '</select>' +
+        '</div>' +
+
+        /* Categoria — ALT-01 */
+        '<div style="display:flex;flex-direction:column;gap:3px;">' +
+          '<label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);font-weight:700;">🏷️ Categoria</label>' +
+          '<select id="cdv2Categ" onchange="filtrarContaV2()" style="padding:7px 8px;font-size:12px;">' +
+            '<option value="">Todas as categorias</option>' +
+            categsUnicas.map(function(cat){ return '<option value="' + esc(cat) + '" ' + (window._cdFiltroCateg===cat?'selected':'') + '>' + esc(cat) + '</option>'; }).join('') +
+          '</select>' +
+        '</div>' +
+
+        /* Ações */
+        '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;">' +
+          '<label style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);font-weight:700;">Ações</label>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+            '<button class="btn btn-xs" onclick="limparFiltrosContaV2()" style="padding:7px 12px;" title="Limpar todos os filtros">✕ Limpar</button>' +
+            '<button class="btn btn-primary btn-xs" onclick="gerarPdfContas()" style="padding:7px 14px;font-weight:700;letter-spacing:.3px;" title="Gerar PDF (usa selecionados se houver, senão todos os filtrados)">📄 Gerar PDF</button>' +
+          '</div>' +
+        '</div>' +
+
+      '</div>' +
+
+      /* ── Painel de resumo de seleção — ALT-02 ── */
+      '<div id="cdPainelSel" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:9px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;transition:all .2s;">' +
+        '<span style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text3);font-weight:700;">Seleção</span>' +
+        '<div style="display:flex;gap:20px;flex:1;">' +
+          '<div>' +
+            '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Registros selecionados</div>' +
+            '<div class="mono" style="font-size:18px;font-weight:800;color:var(--sky);" id="cdSelQtd">' + selIds.length + '</div>' +
+          '</div>' +
+          '<div>' +
+            '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Total selecionado</div>' +
+            '<div class="mono" style="font-size:18px;font-weight:800;color:var(--sky);" id="cdSelTot">' + fmtR(totalSel) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:10px;color:var(--text3);">Marque registros → clique em <strong>Gerar PDF</strong></div>' +
+      '</div>' +
+
+      /* ── Toggles anulados e transferências ── */
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">' +
+        '<span class="show-anulados-toggle" onclick="toggleAnulados()">' + (showAnul?'Ocultar anulados':'Mostrar anulados') + '</span>' +
         '<span class="show-anulados-toggle" onclick="toggleTransferencias()" ' +
-          'style="background:'+(showTrf?'rgba(155,109,255,.15)':'rgba(155,109,255,.05)')+';color:var(--violet);border-color:rgba(155,109,255,.3);">' +
-          '🔁 '+(showTrf?'Ocultar':'Mostrar')+' transferências ('+nTrfs+')' +
+          'style="background:' + (showTrf?'rgba(155,109,255,.15)':'rgba(155,109,255,.05)') + ';color:var(--violet);border-color:rgba(155,109,255,.3);">' +
+          '🔁 ' + (showTrf?'Ocultar':'Mostrar') + ' transferências (' + nTrfs + ')' +
         '</span>' +
       '</div>' +
 
       infoCount +
+
+      /* ── Tabela ── */
       '<div class="table-wrap">' +
         '<table>' +
-          '<tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Subtipo</th><th style="text-align:right;">Valor</th><th>Status</th><th>Ações</th></tr>' +
-          rowsMovs +
-          rowsTrf +
+          '<thead><tr>' +
+            '<th style="width:32px;text-align:center;padding:6px 4px;">' +
+              '<input type="checkbox" id="cdChkAll" onchange="cdSelectAll(this)" title="Selecionar todos os registros visíveis" style="cursor:pointer;width:15px;height:15px;">' +
+            '</th>' +
+            '<th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Subtipo</th><th>F. Pagto</th>' +
+            '<th style="text-align:right;">Valor</th><th>Status</th><th>Ações</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rowsMovs + rowsTrf + '</tbody>' +
         '</table>' +
       '</div>' +
+
       renderPaginacao(totalReg, _pagContas, 'setPagContas', 'contaDetail');
+
+    /* Sincronizar painel imediatamente após render */
+    setTimeout(_atualizarPainelSel, 0);
   };
 
-  console.log('  ✓ [BF-3] Contas: paginação no extrato ('+_PAGE_SIZE+' por página)');
+  console.log('  ✓ [ALT-CONTAS-v3] Contas: filtro categoria, seleção+painel tempo real, PDF completo');
 })();
+
+console.log('⬡ Nexus One v8.0 — Bug Fix Release');
+console.log('  ✓ [BF-1] Cartão → A Pagar: duplicação ao Zerar Fatura eliminada');
+console.log('  ✓ [BF-2] Relatório Previsão de Saldo: linha Saldo Projetado restaurada');
+console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentações');
+</script>
+<script>
+// ================================================================
+// Nexus One v9.0 - camada final de ajustes cirurgicos solicitados.
+// Escopo restrito: Simulador, Cartao, Relatorios, Objetivos, Previsoes, A Receber.
+// [removido: bloco duplicado]
 
 console.log('⬡ Nexus One v8.0 — Bug Fix Release');
 console.log('  ✓ [BF-1] Cartão → A Pagar: duplicação ao Zerar Fatura eliminada');
@@ -13228,7 +13806,8 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
   window._pagContasNexus = 1;
   window._contaAnterior = null;
   window._contaFiltroFormaPg = '';
-  window.setPagContas = function(p){ window._pagContasNexus=p; renderContaDetail(contaSel); };
+  // [ALT-CONTAS-v3] setPagContas já definida pelo novo bloco — não redefine
+  // window.setPagContas = function(p){ window._pagContasNexus=p; renderContaDetail(contaSel); };
   window.filtrarContaPorFormaPg = function(){
     window._contaFiltroFormaPg = document.getElementById('cdFiltroFormaPg').value;
     window._pagContasNexus = 1;
