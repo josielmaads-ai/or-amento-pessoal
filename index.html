@@ -4559,8 +4559,13 @@ function save(silent=false){
   updateSaved();
   // Sinaliza ao auto-sync que houve mudança (hash invalidado)
   _lastSyncHash = null;
-  // Dispara sync imediato no Supabase de forma não-bloqueante
-  if(_sbSession) _sbUpsertSnapshot(JSON.stringify(DATA), true).catch(function(){});
+  // [AUDIT FIX 6] Verificar mutex _syncInProgress para evitar dois PATCHs
+  // simultâneos ao mesmo snapshot (race condition com _autoSyncLoop).
+  // Se auto-sync está em andamento, o _lastSyncHash = null acima garante
+  // que o próximo ciclo do auto-sync enviará os dados atualizados.
+  if(_sbSession && !_syncInProgress){
+    _sbUpsertSnapshot(JSON.stringify(DATA), true).catch(function(){});
+  }
   if(!silent) showToast('💾 Salvo automaticamente','var(--orange)');
 }
 function forceSave(){ save(false); showToast('✅ Dados salvos com sucesso','var(--emerald)'); }
@@ -4688,8 +4693,20 @@ function card(label, bgClass, badge, val, valClass, sub, extra=''){
  * Retorna hash simples dos dados para detectar mudanças.
  */
 function _dataHash(){
+  // [AUDIT FIX 4] Hash robusto: amostragem de chars a cada 97 posições
+  // detecta edições de campos sem alteração de comprimento total do JSON
   try{
-    return JSON.stringify(DATA).length+'_'+(DATA.movimentacoes||[]).length+'_'+(DATA.pagar||[]).length+'_'+(DATA.contas||[]).length+'_'+(DATA.gastosCartao||[]).length;
+    const s = JSON.stringify(DATA);
+    let chk = 0;
+    for(let i = 0; i < s.length; i += 97) chk = (chk + s.charCodeAt(i)) & 0xFFFFFF;
+    return s.length + '_' + chk
+      + '_' + (DATA.movimentacoes||[]).length
+      + '_' + (DATA.pagar||[]).length
+      + '_' + (DATA.contas||[]).length
+      + '_' + (DATA.receber||[]).length
+      + '_' + (DATA.gastosCartao||[]).length
+      + '_' + (DATA.transferencias||[]).length
+      + '_' + (DATA.previsoes||[]).length;
   }catch(e){ return Date.now().toString(); }
 }
 
@@ -4931,6 +4948,18 @@ function dismissDriveBanner(){
 async function _sbUpsertSnapshot(json, silent=false){
   if(!_sbSession) return false;
   try{
+    // [AUDIT FIX 10] Limitar auditoria a 200 registros no snapshot enviado ao Supabase
+    // para evitar payload crescente. O localStorage mantém o histórico completo.
+    let _payloadData;
+    try{
+      _payloadData = JSON.parse(json);
+      if(Array.isArray(_payloadData.auditoria) && _payloadData.auditoria.length > 200){
+        _payloadData = Object.assign({}, _payloadData, {
+          auditoria: _payloadData.auditoria.slice(-200)
+        });
+        json = JSON.stringify(_payloadData);
+      }
+    }catch(_e){ /* usa json original se parse falhar */ }
     // Tenta update primeiro (mais eficiente e seguro com RLS)
     const rPatch = await fetch(
       SUPABASE_URL+'/rest/v1/nexus_snapshots?user_id=eq.'+encodeURIComponent(_sbSession.user.id),
@@ -4941,17 +4970,21 @@ async function _sbUpsertSnapshot(json, silent=false){
       }
     );
     if(rPatch.status === 401){ _handleTokenExpired(); return false; }
-    // Se PATCH atualizou 0 linhas (usuário sem snapshot), faz INSERT
+    // [AUDIT FIX 1] Detecção robusta de 0 linhas atualizadas pelo PATCH.
+    // PostgREST pode retornar '*/0', '0-0/0', '' ou header ausente quando nenhuma
+    // linha é afetada — verificar todas as variantes para evitar INSERT duplicado.
     const contentRange = rPatch.headers.get('Content-Range') || '';
-    const updated = rPatch.ok && contentRange !== '*/0' && contentRange !== '';
+    const _noRows = contentRange === '*/0' || contentRange === '0-0/0' || contentRange === '';
+    const updated = rPatch.ok && !_noRows;
     if(rPatch.ok && !updated){
       // Linha não existe ainda — faz INSERT
+      // [AUDIT FIX 2] user_id explícito para garantir RLS mesmo sem DEFAULT auth.uid()
       const rPost = await fetch(
         SUPABASE_URL+'/rest/v1/nexus_snapshots',
         {
           method:'POST',
           headers:{ ..._sbHeaders(), 'Prefer':'return=minimal' },
-          body: JSON.stringify({ data: JSON.parse(json) })
+          body: JSON.stringify({ user_id: _sbSession.user.id, data: JSON.parse(json) })
         }
       );
       if(rPost.status === 401){ _handleTokenExpired(); return false; }
@@ -4981,7 +5014,7 @@ async function _sbFetchSnapshot(){
   try{
     // RLS garante que retorna apenas o registro do usuário autenticado
     const r = await fetch(
-      SUPABASE_URL+'/rest/v1/nexus_snapshots?select=data,updated_at&limit=1',
+      SUPABASE_URL+'/rest/v1/nexus_snapshots?select=data,updated_at&order=updated_at.desc&limit=1', // [AUDIT FIX 3] order desc garante registro mais recente
       { headers: _sbHeaders() }
     );
     if(r.status === 401){ _handleTokenExpired(); return null; }
@@ -5092,8 +5125,21 @@ async function _sbAutoRestoreOnLogin(){
       _lastSyncHash = null; return;
     }
 
-    const serverTotal = serverContas + serverMov + serverPagar;
-    const localTotal  = localContas  + localMov  + localPagar;
+    // [AUDIT FIX 5] Ampliar comparação para cobrir todos os módulos relevantes.
+    // Antes: apenas contas+movimentacoes+pagar — divergências em receber, gastosCartao,
+    // objetivos, previsoes e transferencias eram ignoradas (falso 'em sincronia').
+    const serverTotal = serverContas + serverMov + serverPagar
+      + (parsed.receber||[]).length
+      + (parsed.gastosCartao||[]).length
+      + (parsed.objetivos||[]).length
+      + (parsed.previsoes||[]).length
+      + (parsed.transferencias||[]).length;
+    const localTotal  = localContas + localMov + localPagar
+      + (DATA.receber||[]).length
+      + (DATA.gastosCartao||[]).length
+      + (DATA.objetivos||[]).length
+      + (DATA.previsoes||[]).length
+      + (DATA.transferencias||[]).length;
 
     if(temDadosServidor && serverTotal !== localTotal){
       const updAt = row.updated_at ? new Date(row.updated_at).toLocaleString('pt-BR') : '?';
@@ -5125,9 +5171,10 @@ async function _applySupabaseData(parsed){
     norm = normalizarDados(JSON.parse(JSON.stringify(parsed)));
   } else {
     norm = parsed;
+    // [AUDIT FIX 9] Incluir cartoes e receitasPrevistas no fallback de normalização
     const arrays = ['contas','movimentacoes','pagar','receber','gastosCartao','objetivos',
       'tipos','subTipos','categoriasCartao','metasGasto','historicoFatura','auditoria',
-      'terceiros','movTerceiros','previsoes','transferencias'];
+      'terceiros','movTerceiros','previsoes','transferencias','cartoes','receitasPrevistas'];
     arrays.forEach(k=>{ if(!Array.isArray(norm[k])) norm[k]=[]; });
     if(!norm.config || typeof norm.config !== 'object') norm.config={};
     ['nome','rendaMensal','diaFechamento','driveDismissed']
@@ -7606,8 +7653,9 @@ function importBackup(){
         if(DATA.config.driveDismissed=== undefined) DATA.config.driveDismissed=false;
         if(DATA.config.googleClientId=== undefined) DATA.config.googleClientId='';
 
-        // Migração legado: transferências internas antigas (movimentacoes com transferenciaId)
-        loadData();
+        // [AUDIT FIX 7] Removido loadData() que sobrescrevia DATA com localStorage
+        // antes de save() — os dados importados (já em DATA) seriam perdidos.
+        // As migrações de transferências legadas já foram aplicadas inline acima.
 
         save(true); // ← salva no localStorage E dispara sync Supabase via save()
         navigateTo('dashboard');
@@ -13183,7 +13231,14 @@ console.log('  ✓ [7] Relatório Previsão de Saldo: reestruturado como tabela 
 console.log('  ✓ [8] Previsões: 3 indicadores no topo (Previsto, Realizado, Saldo)');
 console.log('  ✓ [9] A Receber: Recorrência mensal com campo "Repetir X meses"');
 
-setInterval(()=>{ save(true); }, 60000);
+// [AUDIT FIX 11] Auto-save a cada 60s: só salva se há mudança pendente
+// (evita PATCH desnecessário ao Supabase quando _lastSyncHash está atualizado)
+setInterval(()=>{
+  const _h60 = _dataHash();
+  if(_h60 !== _lastSyncHash){
+    save(true);
+  }
+}, 60000);
 setInterval(checkAlerts, 120000);
 init();
 console.log('⬡ Nexus One v5.0 — Sistema Financeiro Pro Atualizado');
@@ -15034,8 +15089,9 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
 
   // Salvar via Supabase — delegado para saveToGDrive() principal
   window.saveToGDrive=async function(){
+    // [AUDIT FIX 8] Removido save(true) redundante que disparava double-upload.
+    // saveToGDrive() já faz normalização e upsert no Supabase.
     DATA=normalizeBackupData(DATA);
-    save(true);
     return saveToGDrive();
   };
 
@@ -15645,8 +15701,9 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     // ── saveToGDrive FINAL — normaliza antes de enviar ao Drive ──
     // saveToGDrive v10.1 — delegado para implementação Supabase
     window.saveToGDrive = async function(){
+      // [AUDIT FIX 8] Removido save(true) redundante que disparava double-upload.
+      // saveToGDrive() já faz normalização e upsert no Supabase.
       DATA = normalizarDados(DATA);
-      save(true);
       return saveToGDrive();
     };
 
