@@ -5153,7 +5153,8 @@ async function _sbAutoRestoreOnLogin(){
     }
     const parsed = row.data;
     const validos = ['contas','movimentacoes','pagar','receber'].filter(k=>Array.isArray(parsed[k]));
-    if(validos.length < 2){ console.warn('[NexusSupabase] Snapshot inválido. Ignorado.'); return; }
+    const temCDB = parsed.cdbControl && ((parsed.cdbControl.cdbs||[]).length > 0 || (parsed.cdbControl.bancos||[]).length > 0);
+    if(validos.length < 2 && !temCDB){ console.warn('[NexusSupabase] Snapshot inválido. Ignorado.'); return; }
 
     const localMov    = (DATA.movimentacoes||[]).length;
     const serverMov   = (parsed.movimentacoes||[]).length;
@@ -5172,18 +5173,22 @@ async function _sbAutoRestoreOnLogin(){
     // [AUDIT FIX 5] Ampliar comparação para cobrir todos os módulos relevantes.
     // Antes: apenas contas+movimentacoes+pagar — divergências em receber, gastosCartao,
     // objetivos, previsoes e transferencias eram ignoradas (falso 'em sincronia').
+    const serverCDB = (parsed.cdbControl&&parsed.cdbControl.cdbs||[]).length;
+    const localCDB  = (DATA.cdbControl&&DATA.cdbControl.cdbs||[]).length;
     const serverTotal = serverContas + serverMov + serverPagar
       + (parsed.receber||[]).length
       + (parsed.gastosCartao||[]).length
       + (parsed.objetivos||[]).length
       + (parsed.previsoes||[]).length
-      + (parsed.transferencias||[]).length;
+      + (parsed.transferencias||[]).length
+      + serverCDB;
     const localTotal  = localContas + localMov + localPagar
       + (DATA.receber||[]).length
       + (DATA.gastosCartao||[]).length
       + (DATA.objetivos||[]).length
       + (DATA.previsoes||[]).length
-      + (DATA.transferencias||[]).length;
+      + (DATA.transferencias||[]).length
+      + localCDB;
 
     if(temDadosServidor && serverTotal !== localTotal){
       const updAt = row.updated_at ? new Date(row.updated_at).toLocaleString('pt-BR') : '?';
@@ -19816,215 +19821,162 @@ async function _cdbControlRestoreFromBackup(cdbData){
 (function nexusCdbControlSync(){
   'use strict';
 
-  // ── A. Captura state completo do iframe ──
-  function cdbSnapshotFull(){
+  // ── Captura state completo do iframe ──
+  function cdbSnapshot(){
     try{
-      var frame = document.getElementById('cdbControlFrame');
-      var w = frame && frame.contentWindow;
-      if(!w || !w.state || typeof w.state.cdbs === 'undefined') return null;
+      var f = document.getElementById('cdbControlFrame');
+      var w = f && f.contentWindow;
+      if(!w || !w.state || !Array.isArray(w.state.cdbs)) return null;
       return {
-        bancos:        JSON.parse(JSON.stringify(w.state.bancos        || [])),
-        cdbs:          JSON.parse(JSON.stringify(w.state.cdbs          || [])),
-        medicoes:      JSON.parse(JSON.stringify(w.state.medicoes      || [])),
-        movimentacoes: JSON.parse(JSON.stringify(w.state.movimentacoes || [])),
-        baselines:     JSON.parse(JSON.stringify(w.state.baselines     || [])),
+        bancos:        JSON.parse(JSON.stringify(w.state.bancos||[])),
+        cdbs:          JSON.parse(JSON.stringify(w.state.cdbs||[])),
+        medicoes:      JSON.parse(JSON.stringify(w.state.medicoes||[])),
+        movimentacoes: JSON.parse(JSON.stringify(w.state.movimentacoes||[])),
+        baselines:     JSON.parse(JSON.stringify(w.state.baselines||[])),
         _ts: Date.now()
       };
     }catch(e){ return null; }
   }
 
-  // ── B. Restauração COMPLETA com upsert real (substitui por ID) ──
-  function cdbRestoreFull(data){
+  // ── Restaura dados do Supabase/localStorage no iframe ──
+  function cdbRestore(data){
     if(!data) return;
-    var frame = document.getElementById('cdbControlFrame');
-    var w = frame && frame.contentWindow;
-    if(!w || !w.state || typeof w.dbPut !== 'function') return;
-
-    // Upsert: para cada store, substitui ou adiciona por ID
-    var stores = ['bancos','cdbs','medicoes','movimentacoes','baselines'];
-    stores.forEach(function(store){
-      var incoming = data[store] || [];
-      if(!incoming.length) return;
-      // Rebuild state array com upsert
-      var existing = w.state[store] || [];
+    var f = document.getElementById('cdbControlFrame');
+    var w = f && f.contentWindow;
+    if(!w || !w.state) return;
+    ['bancos','cdbs','medicoes','movimentacoes','baselines'].forEach(function(s){
+      var arr = data[s] || [];
+      if(!arr.length) return;
       var byId = {};
-      existing.forEach(function(x){ if(x && x.id) byId[x.id] = x; });
-      incoming.forEach(function(x){ if(x && x.id) byId[x.id] = x; }); // sobrescreve
-      w.state[store] = Object.values(byId);
-      // Persiste cada registro no IndexedDB do iframe
-      incoming.forEach(function(obj){
-        try{ w.dbPut(store, obj); }catch(e){}
-      });
+      (w.state[s]||[]).forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+      arr.forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+      w.state[s] = Object.values(byId);
+      arr.forEach(function(obj){ try{ w.dbPut(s,obj); }catch(e){} });
     });
-
-    if(typeof w.renderPage === 'function'){
-      try{ w.renderPage(); }catch(e){}
-    }
-    console.log('[NexusCDB v2] Restauração completa aplicada ao iframe (',
-      (data.cdbs||[]).length, 'CDB(s),',
-      (data.medicoes||[]).length, 'medição(ões)).');
+    if(typeof w.renderPage==='function') try{ w.renderPage(); }catch(e){}
   }
 
-  // ── C. Patch em save(): injeta snapshot no DATA antes de gravar ──
+  // ── Patch save(): captura snapshot do CDB antes de gravar ──
   var _origSave = window.save;
   window.save = function(silent){
-    var snap = cdbSnapshotFull();
-    if(snap){
-      window.DATA.cdbControl = snap;
-    }
-    // Se snap é null (iframe não aberto), preserva DATA.cdbControl existente
+    var snap = cdbSnapshot();
+    if(snap) window.DATA.cdbControl = snap;
     return _origSave.apply(this, arguments);
   };
 
-  // ── D. Wrap dbPut do iframe: save silencioso imediato a cada escrita ──
-  var _listenerInstalled = false;
-  function installDbPutWrap(){
-    if(_listenerInstalled) return false;
-    var frame = document.getElementById('cdbControlFrame');
-    var w = frame && frame.contentWindow;
+  // ── Wrap dbPut do iframe: salva após cada escrita ──
+  var _installed = false;
+  function installWrap(){
+    if(_installed) return false;
+    var f = document.getElementById('cdbControlFrame');
+    var w = f && f.contentWindow;
     if(!w || typeof w.dbPut !== 'function') return false;
-
-    // Antes de instalar o wrap, verificar se precisamos restaurar dados do Supabase
-    try{
-      var hasCdbData = window.DATA && window.DATA.cdbControl &&
-                       ((window.DATA.cdbControl.cdbs||[]).length > 0 ||
-                        (window.DATA.cdbControl.bancos||[]).length > 0);
-      var iframeEmpty = !w.state ||
-                        ((w.state.cdbs||[]).length === 0 &&
-                         (w.state.bancos||[]).length === 0);
-      if(hasCdbData && iframeEmpty){
-        cdbRestoreFull(window.DATA.cdbControl);
-        console.log('[NexusCDB v2] Dados do Supabase restaurados no iframe (carregamento inicial).');
-      }
-    }catch(e){ console.warn('[NexusCDB v2] Erro no restore inicial:', e); }
-
-    // Wrap dbPut — debounce 800ms → save silencioso imediato
-    var _origDbPut = w.dbPut;
+    // Restaurar dados do Supabase se iframe estiver vazio
+    var hasCloud = window.DATA && window.DATA.cdbControl &&
+      ((window.DATA.cdbControl.cdbs||[]).length > 0 || (window.DATA.cdbControl.bancos||[]).length > 0);
+    var isEmpty = !w.state || ((w.state.cdbs||[]).length===0 && (w.state.bancos||[]).length===0);
+    if(hasCloud && isEmpty) cdbRestore(window.DATA.cdbControl);
+    // Wrap dbPut
+    var _orig = w.dbPut;
     w.dbPut = function(store, obj){
-      var result = _origDbPut.apply(this, arguments);
-      clearTimeout(w._nexusSyncTimer);
-      w._nexusSyncTimer = setTimeout(function(){
-        try{
-          var snap = cdbSnapshotFull();
-          if(snap){
-            window.DATA.cdbControl = snap;
-            // Dispara save silencioso — persiste no Supabase e localStorage
-            if(typeof window.save === 'function'){
-              window.save(true);
-              console.log('[NexusCDB v2] Salvo no Supabase após escrita no CDB (' + store + ').');
-            }
-          }
-        }catch(ex){ console.warn('[NexusCDB v2] Erro no sync pós-dbPut:', ex); }
-      }, 800);
-      return result;
+      var r = _orig.apply(this, arguments);
+      clearTimeout(w._cdbSyncT);
+      w._cdbSyncT = setTimeout(function(){
+        var snap = cdbSnapshot();
+        if(snap){ window.DATA.cdbControl = snap; if(typeof window.save==='function') window.save(true); }
+      }, 600);
+      return r;
     };
-
-    // Wrap dbDelete do iframe também — cobre exclusões
-    if(typeof w.dbDelete === 'function'){
-      var _origDbDelete = w.dbDelete;
+    var _origDel = w.dbDelete;
+    if(typeof _origDel === 'function'){
       w.dbDelete = function(store, id){
-        var result = _origDbDelete.apply(this, arguments);
-        clearTimeout(w._nexusSyncTimer);
-        w._nexusSyncTimer = setTimeout(function(){
-          try{
-            var snap = cdbSnapshotFull();
-            if(snap){
-              window.DATA.cdbControl = snap;
-              if(typeof window.save === 'function') window.save(true);
-            }
-          }catch(ex){}
-        }, 800);
-        return result;
+        var r = _origDel.apply(this, arguments);
+        clearTimeout(w._cdbSyncT);
+        w._cdbSyncT = setTimeout(function(){
+          var snap = cdbSnapshot();
+          if(snap){ window.DATA.cdbControl = snap; if(typeof window.save==='function') window.save(true); }
+        }, 600);
+        return r;
       };
     }
-
-    _listenerInstalled = true;
-    console.log('[NexusCDB v2] Wrap dbPut/dbDelete instalado no iframe CDB Control.');
+    _installed = true;
+    console.log('[CDB Sync] Wrap instalado.');
     return true;
   }
 
-  // Polling para instalar o wrap assim que o iframe estiver pronto
-  var _pollInterval = setInterval(function(){
-    if(installDbPutWrap()) clearInterval(_pollInterval);
-  }, 800);
-  setTimeout(function(){ clearInterval(_pollInterval); }, 300000);
-
-  // ── [2.1] Listener postMessage: instala wrap imediatamente ao sinal 'nexusCDBReady' ──
+  // ── Instalar wrap via postMessage (sinal do iframe) ──
   window.addEventListener('message', function(evt){
-    if(evt.data && evt.data.type === 'nexusCDBReady'){
-      clearInterval(_pollInterval);
-      installDbPutWrap();
+    if(!evt.data || !evt.data.type) return;
+    if(evt.data.type === 'nexusCDBReady'){
+      installWrap();
     }
-    // ── Após import de backup — forçar save no Supabase imediatamente ──
-    if(evt.data && evt.data.type === 'nexusCDBForcarSave'){
-      setTimeout(function(){
-        try{
-          // Usar snap enviado diretamente via postMessage (botão Salvar na Nuvem)
-          var snap = (evt.data && evt.data.snap) ? evt.data.snap : cdbSnapshotFull();
-          if(snap){
-            window.DATA.cdbControl = snap;
-            if(typeof window.save === 'function'){
-              window.save(true);
-              console.log('[NexusCDB] Save forçado após importação/botão de backup.');
-            }
-          }
-        }catch(e){ console.warn('[NexusCDB] Erro no save pós-import:', e); }
-      }, 300);
+    if(evt.data.type === 'nexusCDBForcarSave'){
+      var snap = (evt.data && evt.data.snap) ? evt.data.snap : cdbSnapshot();
+      if(snap){
+        window.DATA.cdbControl = snap;
+        if(typeof window.save === 'function'){
+          window.save(true);
+          console.log('[CDB Sync] Save forçado via postMessage.');
+        }
+      }
     }
   });
 
-  // ── E. Ao navegar para o CDB Control, reforça a instalação ──
-  var _origNavigateTo = window.navigateTo;
-  if(typeof _origNavigateTo === 'function'){
+  // ── Polling de segurança ──
+  var _poll = setInterval(function(){ if(installWrap()) clearInterval(_poll); }, 1000);
+  setTimeout(function(){ clearInterval(_poll); }, 60000);
+
+  // ── Ao navegar para CDB, reforça instalação ──
+  var _origNav = window.navigateTo;
+  if(typeof _origNav === 'function'){
     window.navigateTo = function(mod){
-      var result = _origNavigateTo.apply(this, arguments);
+      var r = _origNav.apply(this, arguments);
       if(mod === 'cdbcontrol'){
         setTimeout(function(){
-          if(!installDbPutWrap()){
-            // iframe pode ainda estar sendo renderizado — tentar mais 3x
-            var attempts = 0;
-            var retry = setInterval(function(){
-              if(installDbPutWrap() || ++attempts >= 6) clearInterval(retry);
-            }, 500);
+          if(!installWrap()){
+            var t=0; var ri=setInterval(function(){ if(installWrap()||++t>10) clearInterval(ri); },500);
           }
-        }, 800);
+        }, 500);
       }
-      return result;
+      return r;
     };
   }
 
-  // ── F. Auto-sync robusto a cada 30s — independente de timing de sessão ──
-  var _lastAutoSync = Date.now();
-  setInterval(function(){
-    var now = Date.now();
-    if(now - _lastAutoSync < 28000) return; // guarda ~2s de margem
-    var frame = document.getElementById('cdbControlFrame');
-    var w = frame && frame.contentWindow;
-    if(!w || !w.state || typeof w.state.cdbs === 'undefined') return;
-    var snap = cdbSnapshotFull();
-    if(!snap) return;
-    window.DATA.cdbControl = snap;
-    if(typeof window.save === 'function'){
-      window.save(true);
-      _lastAutoSync = now;
-    }
-  }, 10000); // verifica a cada 10s, dispara quando atingir 30s
-
-  // ── Patch exportBackup(): garante snapshot fresco ──
-  window.addEventListener('load', function(){
+  // ── Restaurar no iframe após login no Supabase ──
+  var _origApply = window._applySupabaseData;
+  if(typeof _origApply === 'function'){
+    window._applySupabaseData = async function(parsed){
+      var r = await _origApply.apply(this, arguments);
+      if(parsed && parsed.cdbControl){
+        setTimeout(function(){ cdbRestore(parsed.cdbControl); }, 1000);
+      }
+      return r;
+    };
+  } else {
+    // Tentar em 2s (função pode não existir ainda)
     setTimeout(function(){
-      var _origExport = window.exportBackup;
-      if(typeof _origExport === 'function'){
-        window.exportBackup = function(){
-          var snap = cdbSnapshotFull();
-          if(snap) window.DATA.cdbControl = snap;
-          return _origExport.apply(this, arguments);
+      var fn = window._applySupabaseData;
+      if(typeof fn === 'function' && !fn._cdbPatched){
+        fn._cdbPatched = true;
+        window._applySupabaseData = async function(parsed){
+          var r = await fn.apply(this, arguments);
+          if(parsed && parsed.cdbControl) setTimeout(function(){ cdbRestore(parsed.cdbControl); }, 1000);
+          return r;
         };
       }
-    }, 500);
-  });
+    }, 2000);
+  }
 
-  console.log('✓ CDB Control — Integração Supabase v2 ativada (upsert real, sync imediato).');
+  // ── Auto-sync a cada 20s se o iframe estiver aberto ──
+  setInterval(function(){
+    var snap = cdbSnapshot();
+    if(snap && JSON.stringify(snap.cdbs) !== JSON.stringify((window.DATA.cdbControl||{}).cdbs)){
+      window.DATA.cdbControl = snap;
+      if(typeof window.save==='function') window.save(true);
+    }
+  }, 20000);
+
+  console.log('[CDB Sync] Módulo de sincronização inicializado.');
 })();
 </script>
 <script>
