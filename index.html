@@ -5209,19 +5209,17 @@ async function _sbAutoRestoreOnLogin(){
       _lastSyncHash = _dataHash();
       console.log('[NexusSupabase] Dados em sincronia.');
     }
-    // ── Sempre restaurar cdbControl da nuvem no DATA local ──
-    // Independente de sincronia, se a nuvem tem CDB e o local não (ou está desatualizado),
-    // sobrescreve o DATA.cdbControl com o da nuvem.
+    // ── Sempre restaurar cdbControl da nuvem (fonte de verdade) ──
     if(parsed && parsed.cdbControl){
       const cloudCDB = parsed.cdbControl;
       const cloudCDBCount = (cloudCDB.cdbs||[]).length + (cloudCDB.bancos||[]).length;
-      const localCDBCount = (DATA.cdbControl ? (DATA.cdbControl.cdbs||[]).length + (DATA.cdbControl.bancos||[]).length : 0);
-      if(cloudCDBCount > 0 && cloudCDBCount >= localCDBCount){
+      if(cloudCDBCount > 0){
         DATA.cdbControl = cloudCDB;
         localStorage.setItem(SK, JSON.stringify(DATA));
-        console.log('[CDB Sync] cdbControl restaurado da nuvem:', cloudCDBCount, 'registros.');
-        // Empurrar para o iframe se já estiver aberto
-        (function pushToCDB(){
+        console.log('[CDB Sync] cdbControl restaurado da nuvem:', cloudCDBCount, 'item(s).');
+        // Empurrar imediatamente ao iframe se já aberto; senão aguardar sinal nexusCDBReady
+        window._pendingCDBRestore = cloudCDB;
+        (function pushNow(){
           var f = document.getElementById('cdbControlFrame');
           var w = f && f.contentWindow;
           if(w && w.state && typeof w.dbPut === 'function'){
@@ -5236,6 +5234,7 @@ async function _sbAutoRestoreOnLogin(){
               arr.forEach(function(obj){ try{ w.dbPut(s,obj); }catch(e){} });
             });
             if(typeof w.renderPage==='function') try{ w.renderPage(); }catch(e){}
+            window._pendingCDBRestore = null;
             console.log('[CDB Sync] Dados empurrados para o iframe.');
           }
         })();
@@ -19941,6 +19940,27 @@ async function _cdbControlRestoreFromBackup(cdbData){
     if(!evt.data || !evt.data.type) return;
     if(evt.data.type === 'nexusCDBReady'){
       installWrap();
+      // Empurrar dados da nuvem pendentes (Supabase respondeu antes do iframe abrir)
+      if(window._pendingCDBRestore){
+        var pending = window._pendingCDBRestore;
+        window._pendingCDBRestore = null;
+        setTimeout(function(){
+          var f = document.getElementById('cdbControlFrame');
+          var w = f && f.contentWindow;
+          if(!w || !w.state) return;
+          ['bancos','cdbs','medicoes','movimentacoes','baselines'].forEach(function(s){
+            var arr = pending[s] || [];
+            if(!arr.length) return;
+            var byId = {};
+            (w.state[s]||[]).forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+            arr.forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+            w.state[s] = Object.values(byId);
+            arr.forEach(function(obj){ try{ w.dbPut(s,obj); }catch(e){} });
+          });
+          if(typeof w.renderPage==='function') try{ w.renderPage(); }catch(e){}
+          console.log('[CDB Sync] Dados da nuvem empurrados ao iframe (pós-ready).');
+        }, 300);
+      }
     }
     if(evt.data.type === 'nexusCDBForcarSave'){
       var snap = (evt.data && evt.data.snap) ? evt.data.snap : cdbSnapshot();
