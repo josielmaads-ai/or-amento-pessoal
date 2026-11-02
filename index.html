@@ -5209,6 +5209,38 @@ async function _sbAutoRestoreOnLogin(){
       _lastSyncHash = _dataHash();
       console.log('[NexusSupabase] Dados em sincronia.');
     }
+    // ── Sempre restaurar cdbControl da nuvem no DATA local ──
+    // Independente de sincronia, se a nuvem tem CDB e o local não (ou está desatualizado),
+    // sobrescreve o DATA.cdbControl com o da nuvem.
+    if(parsed && parsed.cdbControl){
+      const cloudCDB = parsed.cdbControl;
+      const cloudCDBCount = (cloudCDB.cdbs||[]).length + (cloudCDB.bancos||[]).length;
+      const localCDBCount = (DATA.cdbControl ? (DATA.cdbControl.cdbs||[]).length + (DATA.cdbControl.bancos||[]).length : 0);
+      if(cloudCDBCount > 0 && cloudCDBCount >= localCDBCount){
+        DATA.cdbControl = cloudCDB;
+        localStorage.setItem(SK, JSON.stringify(DATA));
+        console.log('[CDB Sync] cdbControl restaurado da nuvem:', cloudCDBCount, 'registros.');
+        // Empurrar para o iframe se já estiver aberto
+        (function pushToCDB(){
+          var f = document.getElementById('cdbControlFrame');
+          var w = f && f.contentWindow;
+          if(w && w.state && typeof w.dbPut === 'function'){
+            var stores = ['bancos','cdbs','medicoes','movimentacoes','baselines'];
+            stores.forEach(function(s){
+              var arr = cloudCDB[s] || [];
+              if(!arr.length) return;
+              var byId = {};
+              (w.state[s]||[]).forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+              arr.forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+              w.state[s] = Object.values(byId);
+              arr.forEach(function(obj){ try{ w.dbPut(s,obj); }catch(e){} });
+            });
+            if(typeof w.renderPage==='function') try{ w.renderPage(); }catch(e){}
+            console.log('[CDB Sync] Dados empurrados para o iframe.');
+          }
+        })();
+      }
+    }
   }catch(e){ console.error('[NexusSupabase] Erro ao verificar dados na nuvem:', e); }
 }
 /**
