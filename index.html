@@ -15769,17 +15769,24 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
                 + 'Os dados do CDB serão mesclados com os dados atuais do módulo.')) return;
               // 1. Injeta em DATA.cdbControl (fonte de verdade para o Supabase)
               DATA.cdbControl = cdbData;
+              // [CDB FIX D] Sinaliza restore pendente para o handler nexusCDBReady
+              window._pendingCDBRestore = cdbData;
               // 2. Persiste no localStorage
               localStorage.setItem(typeof SK!=='undefined'?SK:'nexus_data', JSON.stringify(DATA));
               showToast('⏳ Carregando CDB Control e sincronizando com a nuvem...','var(--orange)',3000);
-              // 3. Injeta no iframe (com retry até ele carregar)
+              // 3. Injeta no iframe — via _pendingCDBRestore (handler nexusCDBReady) se
+              //    o iframe ainda não está carregado; ou diretamente se já está aberto.
+              //    [CDB FIX D] Usamos um polling com verificação de w.state ≠ null para
+              //    garantir que a injeção só ocorre DEPOIS da init do CDB Module.
               var _cdbNatTries = 0;
               var _cdbNatTimer = setInterval(function(){
                 _cdbNatTries++;
                 var _f = document.getElementById('cdbControlFrame');
                 var _w = _f && _f.contentWindow;
-                if(_w && _w.state && typeof _w.dbPut === 'function'){
+                if(_w && _w.state && Array.isArray(_w.state.cdbs) && typeof _w.dbPut === 'function'){
+                  // iframe completamente inicializado — injeta agora
                   clearInterval(_cdbNatTimer);
+                  window._pendingCDBRestore = null; // consumido aqui
                   var _stores = ['bancos','cdbs','medicoes','movimentacoes','baselines'];
                   _stores.forEach(function(s){
                     var _inc = cdbData[s] || [];
@@ -15791,12 +15798,14 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
                     _inc.forEach(function(obj){ try{ _w.dbPut(s,obj); }catch(_e){} });
                   });
                   if(typeof _w.renderPage==='function') try{ _w.renderPage(); }catch(_e){}
-                  console.log('[CDB NATIVE FIX] '+nCdb+' CDB(s) injetados no iframe.');
+                  console.log('[CDB FIX D] '+nCdb+' CDB(s) injetados no iframe (iframe já estava aberto).');
                 } else if(_cdbNatTries===1 && _f && !window._cdbControlLoaded){
+                  // iframe não carregado ainda — dispara carga (restore via nexusCDBReady)
                   renderCdbControl();
                 } else if(_cdbNatTries >= 80){
                   clearInterval(_cdbNatTimer);
-                  console.warn('[CDB NATIVE FIX] Timeout aguardando iframe.');
+                  // _pendingCDBRestore ainda válido — será consumido quando usuário abrir CDB
+                  console.warn('[CDB FIX D] Timeout no polling — restore será feito ao abrir o módulo CDB.');
                 }
               }, 100);
               // 4. Envia ao Supabase imediatamente (já com DATA.cdbControl preenchido)
@@ -20044,7 +20053,16 @@ async function _cdbControlRestoreFromBackup(cdbData){
     var hasCloud = window.DATA && window.DATA.cdbControl &&
       ((window.DATA.cdbControl.cdbs||[]).length > 0 || (window.DATA.cdbControl.bancos||[]).length > 0);
     var isEmpty = !w.state || ((w.state.cdbs||[]).length===0 && (w.state.bancos||[]).length===0);
-    if(hasCloud && isEmpty) cdbRestore(window.DATA.cdbControl);
+    if(hasCloud && isEmpty){
+      if(w.state && Array.isArray(w.state.cdbs)){
+        // w.state pronto — restaura agora
+        cdbRestore(window.DATA.cdbControl);
+      } else {
+        // [CDB FIX D] w.state ainda null (nexusCDBReady prematuro) — agenda retry
+        // O handler nexusCDBReady já vai cuidar via setTimeout 1500ms, mas reforçamos aqui.
+        setTimeout(cdbRestoreIfNeeded, 1500);
+      }
+    }
     // Wrap dbPut
     var _orig = w.dbPut;
     w.dbPut = function(store, obj){
@@ -20075,32 +20093,60 @@ async function _cdbControlRestoreFromBackup(cdbData){
     return true;
   }
 
+  // ── Função independente: restaura DATA.cdbControl → iframe se estado vazio ──
+  // [CDB FIX D] Independe de _installed. Usada em nexusCDBReady e na navegação.
+  function cdbRestoreIfNeeded(){
+    var f = document.getElementById('cdbControlFrame');
+    var w = f && f.contentWindow;
+    if(!w || !w.state || !Array.isArray(w.state.cdbs)) return false;
+    var hasCloud = window.DATA && window.DATA.cdbControl &&
+      ((window.DATA.cdbControl.cdbs||[]).length > 0 || (window.DATA.cdbControl.bancos||[]).length > 0);
+    var isEmpty = (w.state.cdbs||[]).length === 0 && (w.state.bancos||[]).length === 0;
+    if(hasCloud && isEmpty){
+      cdbRestore(window.DATA.cdbControl);
+      console.log('[CDB FIX D] cdbRestoreIfNeeded: dados restaurados no iframe.');
+      return true;
+    }
+    return false;
+  }
+
   // ── Instalar wrap via postMessage (sinal do iframe) ──
   window.addEventListener('message', function(evt){
     if(!evt.data || !evt.data.type) return;
     if(evt.data.type === 'nexusCDBReady'){
       installWrap();
-      // Empurrar dados da nuvem pendentes (Supabase respondeu antes do iframe abrir)
-      if(window._pendingCDBRestore){
-        var pending = window._pendingCDBRestore;
+      // [CDB FIX D] Delay de 1500ms: aguarda o CDB Module terminar de inicializar
+      // seu próprio state (leitura do IndexedDB). Só depois verifica se restauração
+      // é necessária — evita a race condition onde w.state ainda é null no ready.
+      setTimeout(function(){
+        // Consome _pendingCDBRestore (import nativo) ou restaura da nuvem
+        var pending = window._pendingCDBRestore || (
+          window.DATA && window.DATA.cdbControl &&
+          ((window.DATA.cdbControl.cdbs||[]).length > 0 || (window.DATA.cdbControl.bancos||[]).length > 0)
+            ? window.DATA.cdbControl : null
+        );
         window._pendingCDBRestore = null;
-        setTimeout(function(){
-          var f = document.getElementById('cdbControlFrame');
-          var w = f && f.contentWindow;
-          if(!w || !w.state) return;
-          ['bancos','cdbs','medicoes','movimentacoes','baselines'].forEach(function(s){
-            var arr = pending[s] || [];
-            if(!arr.length) return;
-            var byId = {};
-            (w.state[s]||[]).forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
-            arr.forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
-            w.state[s] = Object.values(byId);
-            arr.forEach(function(obj){ try{ w.dbPut(s,obj); }catch(e){} });
-          });
-          if(typeof w.renderPage==='function') try{ w.renderPage(); }catch(e){}
-          console.log('[CDB Sync] Dados da nuvem empurrados ao iframe (pós-ready).');
-        }, 300);
-      }
+        if(!pending) return;
+        var f = document.getElementById('cdbControlFrame');
+        var w = f && f.contentWindow;
+        if(!w || !w.state || !Array.isArray(w.state.cdbs)) return;
+        var isEmpty = (w.state.cdbs||[]).length === 0 && (w.state.bancos||[]).length === 0;
+        if(!isEmpty){
+          console.log('[CDB FIX D] Iframe já tem dados — sem restauração necessária.');
+          return;
+        }
+        ['bancos','cdbs','medicoes','movimentacoes','baselines'].forEach(function(s){
+          var arr = pending[s] || [];
+          if(!arr.length) return;
+          var byId = {};
+          (w.state[s]||[]).forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+          arr.forEach(function(x){ if(x&&x.id) byId[x.id]=x; });
+          w.state[s] = Object.values(byId);
+          arr.forEach(function(obj){ try{ w.dbPut(s,obj); }catch(e){} });
+        });
+        if(typeof w.renderPage==='function') try{ w.renderPage(); }catch(e){}
+        console.log('[CDB FIX D] Dados empurrados ao iframe após 1500ms (pós-ready).');
+      }, 1500);
     }
     if(evt.data.type === 'nexusCDBForcarSave'){
       var snap = (evt.data && evt.data.snap) ? evt.data.snap : cdbSnapshot();
@@ -20118,17 +20164,26 @@ async function _cdbControlRestoreFromBackup(cdbData){
   var _poll = setInterval(function(){ if(installWrap()) clearInterval(_poll); }, 1000);
   setTimeout(function(){ clearInterval(_poll); }, 60000);
 
-  // ── Ao navegar para CDB, reforça instalação ──
+  // ── Ao navegar para CDB, reforça instalação E restaura se necessário ──
   var _origNav = window.navigateTo;
   if(typeof _origNav === 'function'){
     window.navigateTo = function(mod){
       var r = _origNav.apply(this, arguments);
       if(mod === 'cdbcontrol'){
+        // Tenta instalar wrap imediatamente
         setTimeout(function(){
           if(!installWrap()){
             var t=0; var ri=setInterval(function(){ if(installWrap()||++t>10) clearInterval(ri); },500);
           }
         }, 500);
+        // [CDB FIX D] Restauração independente de _installed: aguarda init do módulo
+        // e verifica se o state está vazio mas DATA.cdbControl tem dados da nuvem.
+        setTimeout(function(){
+          if(!cdbRestoreIfNeeded()){
+            // Retry em 1s caso ainda não esteja pronto
+            setTimeout(cdbRestoreIfNeeded, 1000);
+          }
+        }, 1500);
       }
       return r;
     };
@@ -20140,7 +20195,10 @@ async function _cdbControlRestoreFromBackup(cdbData){
     window._applySupabaseData = async function(parsed){
       var r = await _origApply.apply(this, arguments);
       if(parsed && parsed.cdbControl){
-        setTimeout(function(){ cdbRestore(parsed.cdbControl); }, 1000);
+        // [CDB FIX D] Delay 1500ms: aguarda init do módulo CDB (se aberto)
+        // e usa cdbRestoreIfNeeded para evitar sobrescrever estado não-vazio.
+        window._pendingCDBRestore = parsed.cdbControl;
+        setTimeout(function(){ cdbRestoreIfNeeded(); window._pendingCDBRestore = null; }, 1500);
       }
       return r;
     };
@@ -20152,7 +20210,10 @@ async function _cdbControlRestoreFromBackup(cdbData){
         fn._cdbPatched = true;
         window._applySupabaseData = async function(parsed){
           var r = await fn.apply(this, arguments);
-          if(parsed && parsed.cdbControl) setTimeout(function(){ cdbRestore(parsed.cdbControl); }, 1000);
+          if(parsed && parsed.cdbControl){
+            window._pendingCDBRestore = parsed.cdbControl;
+            setTimeout(function(){ cdbRestoreIfNeeded(); window._pendingCDBRestore = null; }, 1500);
+          }
           return r;
         };
       }
