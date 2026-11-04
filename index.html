@@ -4750,7 +4750,10 @@ function _dataHash(){
       + '_' + (DATA.receber||[]).length
       + '_' + (DATA.gastosCartao||[]).length
       + '_' + (DATA.transferencias||[]).length
-      + '_' + (DATA.previsoes||[]).length;
+      + '_' + (DATA.previsoes||[]).length
+      + '_' + (DATA.cdbControl&&DATA.cdbControl.cdbs||[]).length
+      + '_' + (DATA.cdbControl&&DATA.cdbControl.bancos||[]).length
+      + '_' + (DATA.cdbControl&&DATA.cdbControl.medicoes||[]).length;
   }catch(e){ return Date.now().toString(); }
 }
 
@@ -15700,6 +15703,22 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
     // garantir a estrutura dos dados (arrays/campos padrão) e exportar o
     // estado atual, sem criar, duplicar ou restaurar nenhum registro.
     window.exportBackup = function(){
+      // [CDB FIX] Captura snapshot do CDB Control antes de exportar,
+      // garantindo que o backup JSON sempre inclua os dados do módulo CDB.
+      try{
+        var _cdbFrame = document.getElementById('cdbControlFrame');
+        var _cdbWin = _cdbFrame && _cdbFrame.contentWindow;
+        if(_cdbWin && _cdbWin.state && Array.isArray(_cdbWin.state.cdbs)){
+          DATA.cdbControl = {
+            bancos:        JSON.parse(JSON.stringify(_cdbWin.state.bancos        || [])),
+            cdbs:          JSON.parse(JSON.stringify(_cdbWin.state.cdbs          || [])),
+            medicoes:      JSON.parse(JSON.stringify(_cdbWin.state.medicoes      || [])),
+            movimentacoes: JSON.parse(JSON.stringify(_cdbWin.state.movimentacoes || [])),
+            baselines:     JSON.parse(JSON.stringify(_cdbWin.state.baselines     || [])),
+            _ts: Date.now()
+          };
+        }
+      }catch(_e){ console.warn('[CDB FIX] exportBackup: snapshot CDB indisponível', _e); }
       DATA = normalizarDados(DATA, true);
       save(true);
       var hoje2 = new Date().toISOString().split('T')[0];
@@ -15743,25 +15762,69 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
               'Tipos/SubTipos: '+norm.tipos.length+' / '+norm.subTipos.length+'\n'+
               'Configurações e ciclo do cartão: incluídos';
             if(!confirm('Substituir TODOS os dados pelo arquivo importado?\n\n'+resumo)) return;
+            // [CDB FIX 1] Preservar cdbControl do arquivo importado ANTES de normalizarDados,
+            // pois normalizarDados não conhece essa chave e a descarta.
+            if(parsed.cdbControl && (
+              (parsed.cdbControl.cdbs   &&parsed.cdbControl.cdbs.length   >0) ||
+              (parsed.cdbControl.bancos &&parsed.cdbControl.bancos.length  >0)
+            )){
+              norm.cdbControl = parsed.cdbControl;
+            }
             DATA = norm; // ← sem chamar loadData() que sobrescreveria com localStorage
             save(true);   // ← salva no localStorage E dispara sync Supabase via save()
             navigateTo('dashboard');
             var total = norm.contas.length+norm.movimentacoes.length+norm.pagar.length+norm.receber.length;
-            showToast('✅ Backup importado! ('+total+' registros principais carregados)','var(--emerald)',4000);
+            var cdbInfo = norm.cdbControl ? ' + CDB ('+((norm.cdbControl.cdbs||[]).length)+' CDB(s))' : '';
+            showToast('✅ Backup importado! ('+total+' registros principais'+cdbInfo+' carregados)','var(--emerald)',4000);
+            // [CDB FIX 2] Restaurar dados do CDB no iframe após importação,
+            // com delay para aguardar renderização do módulo se necessário.
+            if(norm.cdbControl){
+              var _cdbRestDelay = 800;
+              var _cdbRestTries = 0;
+              var _cdbRestTimer = setInterval(function(){
+                _cdbRestTries++;
+                var _f = document.getElementById('cdbControlFrame');
+                var _w = _f && _f.contentWindow;
+                if(_w && _w.state && typeof _w.dbPut === 'function'){
+                  clearInterval(_cdbRestTimer);
+                  var _stores = ['bancos','cdbs','medicoes','movimentacoes','baselines'];
+                  _stores.forEach(function(s){
+                    var _incoming = norm.cdbControl[s] || [];
+                    if(!_incoming.length) return;
+                    var _byId = {};
+                    (_w.state[s]||[]).forEach(function(x){ if(x&&x.id) _byId[x.id]=x; });
+                    _incoming.forEach(function(x){ if(x&&x.id) _byId[x.id]=x; });
+                    _w.state[s] = Object.values(_byId);
+                    _incoming.forEach(function(obj){ try{ _w.dbPut(s,obj); }catch(_e){} });
+                  });
+                  if(typeof _w.renderPage==='function') try{ _w.renderPage(); }catch(_e){}
+                  console.log('[CDB FIX] CDB Control restaurado do backup JSON ('+((norm.cdbControl.cdbs||[]).length)+' CDB(s)).');
+                } else if(_cdbRestTries === 1 && _f && !window._cdbControlLoaded){
+                  renderCdbControl(); // carrega o iframe se ainda não aberto
+                } else if(_cdbRestTries >= 60){
+                  clearInterval(_cdbRestTimer);
+                  console.warn('[CDB FIX] Timeout ao aguardar iframe CDB para restaurar backup.');
+                }
+              }, 150);
+            }
             // Sync imediato e explícito com Supabase após importação
             if(typeof _sbSession !== 'undefined' && _sbSession){
               showToast('☁️ Sincronizando dados importados com a nuvem...','var(--orange)',2500);
-              _sbUpsertSnapshot(JSON.stringify(DATA), true).then(function(ok){
-                if(ok){
-                  _lastSyncHash = _dataHash();
-                  showToast('✅ Dados importados sincronizados com a nuvem!','var(--emerald)',4000);
-                } else {
+              // [CDB FIX 3] Aguarda restauração do CDB (1.5s) antes do segundo upsert,
+              // para garantir que DATA.cdbControl esteja preenchido no payload final.
+              setTimeout(function(){
+                _sbUpsertSnapshot(JSON.stringify(DATA), true).then(function(ok){
+                  if(ok){
+                    _lastSyncHash = _dataHash();
+                    showToast('✅ Dados importados sincronizados com a nuvem!'+cdbInfo,'var(--emerald)',4000);
+                  } else {
+                    showToast('⚠️ Importação salva localmente. Clique em "Salvar na Nuvem" para sincronizar.','var(--amber)',6000);
+                  }
+                }).catch(function(e){
+                  console.error('[NexusSupabase] Erro sync pós-importação:', e);
                   showToast('⚠️ Importação salva localmente. Clique em "Salvar na Nuvem" para sincronizar.','var(--amber)',6000);
-                }
-              }).catch(function(e){
-                console.error('[NexusSupabase] Erro sync pós-importação:', e);
-                showToast('⚠️ Importação salva localmente. Clique em "Salvar na Nuvem" para sincronizar.','var(--amber)',6000);
-              });
+                });
+              }, 1500);
             } else {
               showToast('ℹ️ Dados salvos localmente. Faça login para sincronizar com a nuvem.','var(--orange)',5000);
             }
