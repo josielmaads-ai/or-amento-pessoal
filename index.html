@@ -15743,9 +15743,84 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
         reader.onload = function(e){
           try{
             var parsed = JSON.parse(e.target.result);
-            // Validação mínima
+
+            // ══════════════════════════════════════════════════════════════
+            // [CDB NATIVE FIX] Detecta backup no formato NATIVO do CDB Control
+            // { "versao":"1.0", "dados":{ "bancos":[...], "cdbs":[...], ... } }
+            // e o processa diretamente, sem passar pela validação do Nexus.
+            // ══════════════════════════════════════════════════════════════
+            if(parsed && parsed.versao && parsed.dados && Array.isArray(parsed.dados.cdbs)){
+              var cdbNativo = parsed.dados;
+              var cdbData = {
+                bancos:        cdbNativo.bancos        || [],
+                cdbs:          cdbNativo.cdbs          || [],
+                medicoes:      cdbNativo.medicoes       || [],
+                movimentacoes: cdbNativo.movimentacoes  || [],
+                baselines:     cdbNativo.baselines      || [],
+                _ts: Date.now()
+              };
+              var nCdb = cdbData.cdbs.length;
+              var nBco = cdbData.bancos.length;
+              if(!confirm('Importar backup do CDB Control?\n\n'
+                + nBco+' banco(s)\n'
+                + nCdb+' CDB(s)\n'
+                + cdbData.medicoes.length+' medição(ões)\n'
+                + cdbData.baselines.length+' baseline(s)\n\n'
+                + 'Os dados do CDB serão mesclados com os dados atuais do módulo.')) return;
+              // 1. Injeta em DATA.cdbControl (fonte de verdade para o Supabase)
+              DATA.cdbControl = cdbData;
+              // 2. Persiste no localStorage
+              localStorage.setItem(typeof SK!=='undefined'?SK:'nexus_data', JSON.stringify(DATA));
+              showToast('⏳ Carregando CDB Control e sincronizando com a nuvem...','var(--orange)',3000);
+              // 3. Injeta no iframe (com retry até ele carregar)
+              var _cdbNatTries = 0;
+              var _cdbNatTimer = setInterval(function(){
+                _cdbNatTries++;
+                var _f = document.getElementById('cdbControlFrame');
+                var _w = _f && _f.contentWindow;
+                if(_w && _w.state && typeof _w.dbPut === 'function'){
+                  clearInterval(_cdbNatTimer);
+                  var _stores = ['bancos','cdbs','medicoes','movimentacoes','baselines'];
+                  _stores.forEach(function(s){
+                    var _inc = cdbData[s] || [];
+                    if(!_inc.length) return;
+                    var _byId = {};
+                    (_w.state[s]||[]).forEach(function(x){ if(x&&x.id) _byId[x.id]=x; });
+                    _inc.forEach(function(x){ if(x&&x.id) _byId[x.id]=x; });
+                    _w.state[s] = Object.values(_byId);
+                    _inc.forEach(function(obj){ try{ _w.dbPut(s,obj); }catch(_e){} });
+                  });
+                  if(typeof _w.renderPage==='function') try{ _w.renderPage(); }catch(_e){}
+                  console.log('[CDB NATIVE FIX] '+nCdb+' CDB(s) injetados no iframe.');
+                } else if(_cdbNatTries===1 && _f && !window._cdbControlLoaded){
+                  renderCdbControl();
+                } else if(_cdbNatTries >= 80){
+                  clearInterval(_cdbNatTimer);
+                  console.warn('[CDB NATIVE FIX] Timeout aguardando iframe.');
+                }
+              }, 100);
+              // 4. Envia ao Supabase imediatamente (já com DATA.cdbControl preenchido)
+              if(typeof _sbSession !== 'undefined' && _sbSession){
+                setTimeout(function(){
+                  _sbUpsertSnapshot(JSON.stringify(DATA), false).then(function(ok){
+                    if(ok){
+                      if(typeof _lastSyncHash!=='undefined') _lastSyncHash = _dataHash();
+                      showToast('✅ CDB Control importado e salvo na nuvem! ('+nCdb+' CDB(s), '+nBco+' banco(s))','var(--emerald)',5000);
+                    } else {
+                      showToast('⚠️ CDB carregado localmente. Clique no ícone de nuvem para sincronizar.','var(--amber)',6000);
+                    }
+                  }).catch(function(){ showToast('⚠️ Erro ao sincronizar CDB com a nuvem.','var(--coral)',5000); });
+                }, 500);
+              } else {
+                showToast('✅ CDB Control importado! ('+nCdb+' CDB(s)). Faça login para sincronizar com a nuvem.','var(--emerald)',5000);
+              }
+              return; // ← não continua para o fluxo normal do Nexus
+            }
+            // ══════════════════════════════════════════════════════════════
+
+            // Validação mínima (backup Nexus One)
             var validos = ['contas','movimentacoes','pagar','receber'].filter(function(k){return Array.isArray(parsed[k]);});
-            if(validos.length < 2) return showToast('❌ Arquivo não reconhecido como backup válido','var(--coral)');
+            if(validos.length < 2) return showToast('❌ Arquivo não reconhecido como backup válido (Nexus ou CDB)','var(--coral)');
             var norm = normalizarDados(JSON.parse(JSON.stringify(parsed)));
             var resumo =
               'Contas: '+norm.contas.length+'\n'+
@@ -19975,10 +20050,12 @@ async function _cdbControlRestoreFromBackup(cdbData){
     w.dbPut = function(store, obj){
       var r = _orig.apply(this, arguments);
       clearTimeout(w._cdbSyncT);
+      // [CDB FIX B] Debounce aumentado para 3000ms: garante que o CDB module
+      // termina de renderizar e popular w.state antes de cdbSnapshot() ser chamado.
       w._cdbSyncT = setTimeout(function(){
         var snap = cdbSnapshot();
         if(snap){ window.DATA.cdbControl = snap; if(typeof window.save==='function') window.save(true); }
-      }, 600);
+      }, 3000);
       return r;
     };
     var _origDel = w.dbDelete;
@@ -19989,7 +20066,7 @@ async function _cdbControlRestoreFromBackup(cdbData){
         w._cdbSyncT = setTimeout(function(){
           var snap = cdbSnapshot();
           if(snap){ window.DATA.cdbControl = snap; if(typeof window.save==='function') window.save(true); }
-        }, 600);
+        }, 3000);
         return r;
       };
     }
@@ -20082,14 +20159,23 @@ async function _cdbControlRestoreFromBackup(cdbData){
     }, 2000);
   }
 
-  // ── Auto-sync a cada 20s se o iframe estiver aberto ──
+  // ── Auto-sync a cada 4s se o iframe estiver aberto ──
+  // [CDB FIX C] Intervalo reduzido de 20s para 4s.
+  // Comparação ampliada: inclui bancos, medicoes e baselines (não só cdbs).
   setInterval(function(){
     var snap = cdbSnapshot();
-    if(snap && JSON.stringify(snap.cdbs) !== JSON.stringify((window.DATA.cdbControl||{}).cdbs)){
+    if(!snap) return;
+    var cur = window.DATA.cdbControl || {};
+    var snapKey = JSON.stringify(snap.cdbs)+'|'+JSON.stringify(snap.bancos)+'|'
+                + JSON.stringify(snap.medicoes)+'|'+JSON.stringify(snap.baselines);
+    var curKey  = JSON.stringify(cur.cdbs||[])+'|'+JSON.stringify(cur.bancos||[])+'|'
+                + JSON.stringify(cur.medicoes||[])+'|'+JSON.stringify(cur.baselines||[]);
+    if(snapKey !== curKey){
       window.DATA.cdbControl = snap;
       if(typeof window.save==='function') window.save(true);
+      console.log('[CDB FIX C] Auto-sync CDB detectou mudança — salvando...');
     }
-  }, 20000);
+  }, 4000);
 
   console.log('[CDB Sync] Módulo de sincronização inicializado.');
 })();
