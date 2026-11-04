@@ -5219,6 +5219,9 @@ async function _sbAutoRestoreOnLogin(){
       if(cloudCDBCount > 0){
         DATA.cdbControl = cloudCDB;
         localStorage.setItem(SK, JSON.stringify(DATA));
+        // Reseta flag para que, se CDB Control já estava aberto sem seed,
+        // a próxima navegação reinjete o srcdoc com os dados da nuvem
+        _cdbControlLoaded = false;
         console.log('[CDB Sync] cdbControl restaurado da nuvem:', cloudCDBCount, 'item(s).');
         // Empurrar imediatamente ao iframe se já aberto; senão aguardar sinal nexusCDBReady
         window._pendingCDBRestore = cloudCDB;
@@ -19469,11 +19472,71 @@ function _cdbDecodeHtml(){
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+function _cdbInjectSeed(html){
+  // Injeta script de pré-população de IndexedDB ANTES que o módulo CDB leia seus dados.
+  // Isso elimina qualquer race condition de timing — os dados já estão no IDB quando
+  // o módulo inicializa.
+  var seed = null;
+  try {
+    var p = window.DATA && window.DATA.cdbControl;
+    if(p && ((p.cdbs||[]).length > 0 || (p.bancos||[]).length > 0 || (p.baselines||[]).length > 0)){
+      seed = p;
+    }
+  } catch(e){}
+  if(!seed) return html; // sem dados na nuvem, nada a injetar
+
+  var seedJson = JSON.stringify(seed);
+
+  var injectScript = '<script id="_nexusCdbSeedScript">(function(){\n'
+    + '  try {\n'
+    + '    var _SEED = ' + seedJson + ';\n'
+    + '    var _STORES = ["bancos","cdbs","medicoes","movimentacoes","baselines"];\n'
+    + '    // Intercepta IDBFactory.prototype.open para pré-popular stores\n'
+    + '    var _origOpen = IDBFactory.prototype.open;\n'
+    + '    IDBFactory.prototype.open = function(name, ver) {\n'
+    + '      var req = _origOpen.apply(this, arguments);\n'
+    + '      req.addEventListener("success", function() {\n'
+    + '        try {\n'
+    + '          var db = req.result;\n'
+    + '          _STORES.forEach(function(s) {\n'
+    + '            var arr = _SEED[s] || [];\n'
+    + '            if(!arr.length) return;\n'
+    + '            if(!db.objectStoreNames.contains(s)) return;\n'
+    + '            try {\n'
+    + '              var tx = db.transaction([s], "readwrite");\n'
+    + '              var os = tx.objectStore(s);\n'
+    + '              // Conta registros existentes; só popula se vazio\n'
+    + '              var cr = os.count();\n'
+    + '              cr.onsuccess = (function(store, items) {\n'
+    + '                return function() {\n'
+    + '                  if(cr.result > 0) return;\n'
+    + '                  items.forEach(function(o) {\n'
+    + '                    try { store.put(o); } catch(e2) {}\n'
+    + '                  });\n'
+    + '                  console.log("[CDB Seed] Populado store " + s + " com " + items.length + " registros.");\n'
+    + '                };\n'
+    + '              })(os, arr);\n'
+    + '            } catch(e) { console.warn("[CDB Seed] Erro no store " + s, e); }\n'
+    + '          });\n'
+    + '        } catch(e) { console.warn("[CDB Seed] Erro ao pré-popular IDB", e); }\n'
+    + '      }, {once: true});\n'
+    + '      return req;\n'
+    + '    };\n'
+    + '    console.log("[CDB Seed] Interceptor IDB instalado. Stores a popular: " + _STORES.filter(function(s){ return (_SEED[s]||[]).length > 0; }).join(", "));\n'
+    + '  } catch(e) { console.error("[CDB Seed] Falha ao instalar interceptor:", e); }\n'
+    + '})()\x3c/script>';
+
+  // Injeta imediatamente após <head> para garantir execução antes de qualquer outro script
+  return html.replace('<head>', '<head>' + injectScript);
+}
+
 function renderCdbControl(){
   var frame = document.getElementById('cdbControlFrame');
   if(!frame) return;
   if(!_cdbControlLoaded){
-    frame.srcdoc = _cdbDecodeHtml();
+    var html = _cdbDecodeHtml();
+    html = _cdbInjectSeed(html);
+    frame.srcdoc = html;
     _cdbControlLoaded = true;
   }
 }
