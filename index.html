@@ -4150,6 +4150,21 @@ table td:first-child:has(input[type="checkbox"]) {
         <canvas id="chartEvolSaldo" height="200"></canvas>
       </div>
     </div>
+
+    <!-- NOVOS COMPONENTES DE ANÁLISE FINANCEIRA -->
+    <div class="grid g2" style="margin-top:8px;">
+      <div class="chart-card">
+        <div class="chart-title">◈ Evolução Mensal do Saldo Líquido</div>
+        <canvas id="chartSaldoLiquido" height="200"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">◈ Comparativo Mensal — Entradas vs Saídas</div>
+        <canvas id="chartEntradasSaidas" height="200"></canvas>
+      </div>
+    </div>
+    <div style="margin-top:8px;" id="dashComprometimentoWrap">
+      <!-- Tabela de comprometimento renderizada via JS -->
+    </div>
   </div>
 
   <!-- CONTAS -->
@@ -5653,6 +5668,177 @@ function renderDashboard(){
     }]},
     options:{responsive:true,plugins:{legend:{labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:11}}}},scales:{x:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10}},grid:{color:'rgba(255,255,255,.03)'}},y:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10},callback:v=>'R$ '+v.toLocaleString('pt-BR')},grid:{color:'rgba(255,255,255,.04)'}}}}
   });
+
+  // ---- NOVOS GRÁFICOS E TABELA DE ANÁLISE FINANCEIRA ----
+
+  // Coleta dados mensais cronológicos (todos os meses com dados)
+  const _mesesSet = new Set();
+  DATA.movimentacoes.filter(x=>x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data).forEach(x=>{
+    const ym = x.data.substring(0,7);
+    if(ym <= ma) _mesesSet.add(ym);
+  });
+  const _mesesOrdenados = Array.from(_mesesSet).sort();
+
+  // Calcular entradas/saídas por mês para todos os meses com dados
+  function _calcMes(ym){
+    const e = DATA.movimentacoes.filter(x=>x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data?.startsWith(ym)).reduce((s,x)=>s+x.valor,0);
+    const s = DATA.movimentacoes.filter(x=>x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data?.startsWith(ym)).reduce((s,x)=>s+x.valor,0);
+    return {e, s, liq: e - s};
+  }
+
+  // Usar últimos 12 meses (ou todos disponíveis, o que for menor) para os gráficos novos
+  const _ultMeses = _mesesOrdenados.slice(-12);
+  const _liqLabels = _ultMeses.map(ym=>{ const [ay,mm2]=ym.split('-'); return nomeMes(+mm2)+'/'+String(ay).slice(2); });
+  const _liqVals   = _ultMeses.map(ym=>{ const r=_calcMes(ym); return r.liq; });
+  const _entVals   = _ultMeses.map(ym=>_calcMes(ym).e);
+  const _saiVals   = _ultMeses.map(ym=>_calcMes(ym).s);
+
+  // Chart 4: Evolução Mensal do Saldo Líquido (linha)
+  if(charts.chartSaldoLiquido) charts.chartSaldoLiquido.destroy();
+  const ctx4 = document.getElementById('chartSaldoLiquido');
+  if(ctx4) charts.chartSaldoLiquido = new Chart(ctx4, {
+    type:'line',
+    data:{labels:_liqLabels.length?_liqLabels:['Sem dados'],datasets:[{
+      label:'Saldo Líquido (Entradas − Saídas)',
+      data:_liqVals.length?_liqVals:[0],
+      borderColor:'#9B6DFF',
+      backgroundColor:'rgba(155,109,255,.10)',
+      borderWidth:2.5,
+      pointBackgroundColor:_liqVals.map(v=>v>=0?'#9B6DFF':'rgba(255,77,106,.9)'),
+      pointRadius:5,
+      fill:true,
+      tension:.35,
+      segment:{
+        borderColor:ctx=>ctx.p0.parsed.y>=0&&ctx.p1.parsed.y>=0?'#9B6DFF':'rgba(255,77,106,.85)',
+        backgroundColor:ctx=>ctx.p0.parsed.y>=0&&ctx.p1.parsed.y>=0?'rgba(155,109,255,.10)':'rgba(255,77,106,.08)'
+      }
+    }]},
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:11}}},
+        tooltip:{callbacks:{label:ctx=>'Saldo: R$ '+ctx.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2})}}
+      },
+      scales:{
+        x:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10}},grid:{color:'rgba(255,255,255,.03)'}},
+        y:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10},callback:v=>'R$ '+v.toLocaleString('pt-BR')},grid:{color:'rgba(255,255,255,.04)'},
+           afterDataLimits(scale){ const pad=Math.abs(scale.max-scale.min)*0.15||100; scale.min-=pad; scale.max+=pad; }
+        }
+      }
+    }
+  });
+
+  // Chart 5: Comparativo Entradas vs Saídas (duas linhas)
+  if(charts.chartEntradasSaidas) charts.chartEntradasSaidas.destroy();
+  const ctx5 = document.getElementById('chartEntradasSaidas');
+  if(ctx5) charts.chartEntradasSaidas = new Chart(ctx5, {
+    type:'line',
+    data:{labels:_liqLabels.length?_liqLabels:['Sem dados'],datasets:[
+      {label:'Entradas',data:_entVals.length?_entVals:[0],
+        borderColor:'var(--emerald)',backgroundColor:'rgba(0,229,160,.07)',
+        borderWidth:2.5,pointBackgroundColor:'var(--emerald)',pointRadius:5,fill:false,tension:.35},
+      {label:'Saídas',data:_saiVals.length?_saiVals:[0],
+        borderColor:'var(--coral)',backgroundColor:'rgba(255,77,106,.07)',
+        borderWidth:2.5,pointBackgroundColor:'var(--coral)',pointRadius:5,fill:false,tension:.35}
+    ]},
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:11}}},
+        tooltip:{callbacks:{label:ctx=>(ctx.dataset.label||'')+': R$ '+ctx.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2})}}
+      },
+      scales:{
+        x:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10}},grid:{color:'rgba(255,255,255,.03)'}},
+        y:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10},callback:v=>'R$ '+v.toLocaleString('pt-BR')},grid:{color:'rgba(255,255,255,.04)'}}
+      }
+    }
+  });
+
+  // Tabela de Comprometimento Percentual
+  (function renderComprometimento(){
+    const wrap = document.getElementById('dashComprometimentoWrap');
+    if(!wrap) return;
+
+    // Pegar os últimos N meses com dados disponíveis (apenas até mês atual)
+    const mesesDisp = _mesesOrdenados; // já ordenados e filtrados até ma
+
+    function somaPeríodo(nMeses){
+      const slc = mesesDisp.slice(-nMeses);
+      let totE=0, totS=0;
+      slc.forEach(ym=>{ const r=_calcMes(ym); totE+=r.e; totS+=r.s; });
+      return {totE, totS, n: slc.length};
+    }
+
+    function classePct(pct){
+      if(pct===null) return '';
+      if(pct<=50)  return 'color:#00E5A0;font-weight:700;';
+      if(pct<=70)  return 'color:#FFB830;font-weight:700;';
+      if(pct<=100) return 'color:#FF7A00;font-weight:700;';
+      return 'color:#FF4D6A;font-weight:700;';
+    }
+    function icone(pct){
+      if(pct===null) return '—';
+      if(pct<=50)  return '✅';
+      if(pct<=70)  return '⚠️';
+      if(pct<=100) return '🔴';
+      return '🚨';
+    }
+    function status(pct){
+      if(pct===null) return 'N/A';
+      if(pct<=50)  return 'Dentro da meta';
+      if(pct<=70)  return 'Acima do objetivo';
+      if(pct<=100) return 'Comprometimento elevado';
+      return 'Situação crítica';
+    }
+    function fmtPct(pct){ return pct===null?'N/A':pct.toFixed(2)+'%'; }
+
+    const periodos = [
+      {label:'Último mês',    n:1},
+      {label:'Últimos 2 meses', n:2},
+      {label:'Últimos 3 meses', n:3},
+      {label:'Últimos 6 meses', n:6}
+    ].filter(p=>p.n <= mesesDisp.length);
+
+    if(!periodos.length){
+      wrap.innerHTML='';
+      return;
+    }
+
+    let linhas = '';
+    periodos.forEach(p=>{
+      const {totE, totS} = somaPeríodo(p.n);
+      const pct = totE>0 ? (totS/totE*100) : null;
+      linhas += `<tr>
+        <td style="padding:10px 14px;border:1px solid var(--border);color:var(--text2);font-size:13px;">${p.label}</td>
+        <td style="padding:10px 14px;border:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">${fmtR(totE)}</td>
+        <td style="padding:10px 14px;border:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">${fmtR(totS)}</td>
+        <td style="padding:10px 14px;border:1px solid var(--border);text-align:center;font-size:14px;${classePct(pct)}">${icone(pct)} ${fmtPct(pct)}</td>
+        <td style="padding:10px 14px;border:1px solid var(--border);font-size:12px;${classePct(pct)}">${status(pct)}</td>
+      </tr>`;
+    });
+
+    wrap.innerHTML = `<div class="chart-card" style="overflow-x:auto;">
+      <div class="chart-title">◈ Comprometimento das Entradas com Despesas — Meta: até 50%</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px;">
+        <span style="color:#00E5A0;">✅ ≤50% Dentro da meta</span> &nbsp;
+        <span style="color:#FFB830;">⚠️ 51–70% Atenção</span> &nbsp;
+        <span style="color:#FF7A00;">🔴 71–100% Elevado</span> &nbsp;
+        <span style="color:#FF4D6A;">🚨 &gt;100% Crítico</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;min-width:520px;">
+        <thead>
+          <tr style="background:rgba(255,255,255,.04);">
+            <th style="padding:9px 14px;border:1px solid var(--border);text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Período</th>
+            <th style="padding:9px 14px;border:1px solid var(--border);text-align:right;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Total Entradas</th>
+            <th style="padding:9px 14px;border:1px solid var(--border);text-align:right;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Total Saídas</th>
+            <th style="padding:9px 14px;border:1px solid var(--border);text-align:center;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Comprometimento</th>
+            <th style="padding:9px 14px;border:1px solid var(--border);font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Situação</th>
+          </tr>
+        </thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>`;
+  })();
 }
 
 // ================================================================
