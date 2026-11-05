@@ -12238,8 +12238,9 @@ function renderDashboardV44() {
     var wrap=document.getElementById('dashComprometimentoWrap');
     if(!wrap) return;
     function somaUltimos(n){
+      // Exclui o mês atual (índice 11) — conta apenas meses fechados (índices 0–10)
       var totE=0,totS=0;
-      for(var _pi=Math.max(0,12-n);_pi<12;_pi++){totE+=_entVals[_pi]||0;totS+=_saiVals[_pi]||0;}
+      for(var _pi=Math.max(0,11-n);_pi<11;_pi++){totE+=_entVals[_pi]||0;totS+=_saiVals[_pi]||0;}
       return {totE:totE,totS:totS};
     }
     function classePct(pct){
@@ -12252,7 +12253,7 @@ function renderDashboardV44() {
     function icone(pct){if(pct===null)return '—';if(pct<=50)return '✅';if(pct<=70)return '⚠️';if(pct<=100)return '🔴';return '🚨';}
     function statusLabel(pct){if(pct===null)return 'N/A';if(pct<=50)return 'Dentro da meta';if(pct<=70)return 'Acima do objetivo';if(pct<=100)return 'Comprometimento elevado';return 'Situação crítica';}
     function fmtPct(pct){return pct===null?'N/A':pct.toFixed(2)+'%';}
-    var periodos=[{label:'Último mês',n:1},{label:'Últimos 2 meses',n:2},{label:'Últimos 3 meses',n:3},{label:'Últimos 6 meses',n:6}];
+    var periodos=[{label:'Mês anterior ('+_liqLabels[10]+')',n:1},{label:'Últimos 2 meses fechados',n:2},{label:'Últimos 3 meses fechados',n:3},{label:'Últimos 6 meses fechados',n:6}];
     var linhas='';
     periodos.forEach(function(p){
       var r=somaUltimos(p.n);
