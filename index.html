@@ -5549,28 +5549,36 @@ function renderDashboard(){
   }
   const totSaldoAno=totEntAno-totSaiAno;
   let hAnual=`<div class="table-wrap" style="margin-bottom:16px;"><table>
-    <tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Saldo</th><th>Tendência</th></tr>`;
+    <tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Saldo</th><th style="text-align:center;">% Saídas/Entradas</th><th>Tendência</th></tr>`;
   meses.forEach(({mes:mi,ent,sai,saldo})=>{
     const cls=saldo>=0?'c-emerald':'c-coral';
     const isCurr=mi===m;
     const pctEnt=totEntAno>0?(ent/totEntAno*100):0;
     const pctSai=totSaiAno>0?(sai/totSaiAno*100):0;
+    // % saídas sobre entradas do mês
+    const pctComp = ent>0 ? (sai/ent*100) : null;
+    const pctCompStr = pctComp===null ? 'N/A' : pctComp.toFixed(2)+'%';
+    const pctCompStyle = pctComp===null ? 'color:var(--text3);' : pctComp<=50 ? 'color:#00E5A0;font-weight:700;' : pctComp<=70 ? 'color:#FFB830;font-weight:700;' : pctComp<=100 ? 'color:#FF7A00;font-weight:700;' : 'color:#FF4D6A;font-weight:700;';
     hAnual+=`<tr style="${isCurr?'background:rgba(255,122,0,.04);':mi>m?'opacity:.4;':''}">
       <td style="font-weight:700;${isCurr?'color:var(--orange);':'color:var(--text2);'}">${nomeMesFull(mi)}${isCurr?' ◂':''}</td>
       <td class="mono c-emerald">${ent>0?fmtR(ent):'—'}</td>
       <td class="mono c-coral">${sai>0?fmtR(sai):'—'}</td>
       <td class="mono ${cls}" style="font-weight:700;">${ent>0||sai>0?(saldo>=0?'+':'')+fmtR(saldo):'—'}</td>
+      <td class="mono" style="text-align:center;${pctCompStyle}">${ent>0||sai>0?pctCompStr:'—'}</td>
       <td style="min-width:140px;padding-right:12px;">
         ${ent>0?`<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;"><span style="font-size:9px;color:var(--emerald);width:16px;">↑</span><div style="flex:1;height:4px;background:var(--surface2);border-radius:4px;overflow:hidden;"><div style="width:${Math.min(pctEnt,100).toFixed(0)}%;height:100%;background:var(--emerald);border-radius:4px;"></div></div></div>`:''}
         ${sai>0?`<div style="display:flex;align-items:center;gap:5px;"><span style="font-size:9px;color:var(--coral);width:16px;">↓</span><div style="flex:1;height:4px;background:var(--surface2);border-radius:4px;overflow:hidden;"><div style="width:${Math.min(pctSai,100).toFixed(0)}%;height:100%;background:var(--coral);border-radius:4px;"></div></div></div>`:''}
       </td>
     </tr>`;
   });
+  const pctCompTotal = totEntAno>0 ? (totSaiAno/totEntAno*100).toFixed(2)+'%' : 'N/A';
+  const pctCompTotalStyle = totEntAno===0?'color:var(--text3);':totSaiAno/totEntAno<=0.5?'color:#00E5A0;':totSaiAno/totEntAno<=0.7?'color:#FFB830;':totSaiAno/totEntAno<=1?'color:#FF7A00;':'color:#FF4D6A;';
   hAnual+=`<tr style="border-top:2px solid var(--border2);font-weight:700;">
     <td style="color:var(--orange);">TOTAL ${a}</td>
     <td class="mono c-emerald" style="font-weight:800;">${fmtR(totEntAno)}</td>
     <td class="mono c-coral" style="font-weight:800;">${fmtR(totSaiAno)}</td>
     <td class="mono ${totSaldoAno>=0?'c-emerald':'c-coral'}" style="font-weight:800;">${totSaldoAno>=0?'+':''}${fmtR(totSaldoAno)}</td>
+    <td class="mono" style="text-align:center;font-weight:800;${pctCompTotalStyle}">${pctCompTotal}</td>
     <td></td>
   </tr>`;
   hAnual+=`</table></div>`;
@@ -5646,52 +5654,46 @@ function renderDashboard(){
     options:{responsive:true,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:10},padding:8}}}}
   });
 
-  // Chart 3: Evolução do Saldo
-  const saldoEvol=[];
-  let saldoBase=DATA.contas.reduce((s,c)=>s+c.saldoInicial,0);
-  // Approximate: base + cumulative each month
+  // Chart 3: Evolução do Saldo — total real das contas por mês
+  // Ancora no saldo atual e reconstrói historicamente subtraindo os nets mensais
+  const saldoTotalAtual = DATA.contas.reduce((s,c)=>s+saldoConta(c.id),0);
   const cumul=[];
-  let runSum=saldoBase;
-  for(let i=0;i<6;i++){
-    runSum+=saldos6[i];
-    cumul.push(runSum);
+  // saldos6[5] = net do mês atual, saldos6[0] = net de 5 meses atrás
+  // Percorre de trás pra frente: balanço do mês i = balanço do mês i+1 - net(i+1)
+  let _running = saldoTotalAtual;
+  const _tmpC=[];
+  for(let i=5;i>=0;i--){
+    _tmpC.unshift(_running);
+    _running -= saldos6[i];
   }
+  cumul.push(..._tmpC);
   if(charts.chartEvolSaldo) charts.chartEvolSaldo.destroy();
   const ctx3=document.getElementById('chartEvolSaldo');
   if(ctx3) charts.chartEvolSaldo=new Chart(ctx3,{
     type:'line',
     data:{labels:labels6,datasets:[{
-      label:'Saldo Acumulado',data:cumul,
-      borderColor:'var(--orange)',backgroundColor:'rgba(255,122,0,.08)',
-      borderWidth:2.5,pointBackgroundColor:'var(--orange)',pointRadius:5,
+      label:'Total das Contas',data:cumul,
+      borderColor:'#FF7A00',backgroundColor:'rgba(255,122,0,.08)',
+      borderWidth:2.5,pointBackgroundColor:'#FF7A00',pointRadius:5,
       fill:true,tension:.4
     }]},
     options:{responsive:true,plugins:{legend:{labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:11}}}},scales:{x:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10}},grid:{color:'rgba(255,255,255,.03)'}},y:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10},callback:v=>'R$ '+v.toLocaleString('pt-BR')},grid:{color:'rgba(255,255,255,.04)'}}}}
   });
 
   // ---- NOVOS GRÁFICOS E TABELA DE ANÁLISE FINANCEIRA ----
-
-  // Coleta dados mensais cronológicos (todos os meses com dados)
-  const _mesesSet = new Set();
-  DATA.movimentacoes.filter(x=>x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data).forEach(x=>{
-    const ym = x.data.substring(0,7);
-    if(ym <= ma) _mesesSet.add(ym);
-  });
-  const _mesesOrdenados = Array.from(_mesesSet).sort();
-
-  // Calcular entradas/saídas por mês para todos os meses com dados
-  function _calcMes(ym){
-    const e = DATA.movimentacoes.filter(x=>x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data?.startsWith(ym)).reduce((s,x)=>s+x.valor,0);
-    const s = DATA.movimentacoes.filter(x=>x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data?.startsWith(ym)).reduce((s,x)=>s+x.valor,0);
-    return {e, s, liq: e - s};
+  // Mesmo padrão do loop existente (labels6/ents6), mas para 12 meses
+  var _liqLabels=[], _liqVals=[], _entVals=[], _saiVals=[];
+  for(var _ni=11;_ni>=0;_ni--){
+    var _nd=new Date(a,m-1-_ni,1);
+    var _nm=_nd.getMonth()+1, _na=_nd.getFullYear();
+    var _nStr=_na+'-'+pad(_nm);
+    var _ne=DATA.movimentacoes.filter(function(x){return x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data&&x.data.indexOf(_nStr)===0;}).reduce(function(s,x){return s+x.valor;},0);
+    var _ns=DATA.movimentacoes.filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data&&x.data.indexOf(_nStr)===0;}).reduce(function(s,x){return s+x.valor;},0);
+    _liqLabels.push(nomeMes(_nm)+'/'+String(_na).slice(2));
+    _liqVals.push(_ne-_ns);
+    _entVals.push(_ne);
+    _saiVals.push(_ns);
   }
-
-  // Usar últimos 12 meses (ou todos disponíveis, o que for menor) para os gráficos novos
-  const _ultMeses = _mesesOrdenados.slice(-12);
-  const _liqLabels = _ultMeses.map(ym=>{ const [ay,mm2]=ym.split('-'); return nomeMes(+mm2)+'/'+String(ay).slice(2); });
-  const _liqVals   = _ultMeses.map(ym=>{ const r=_calcMes(ym); return r.liq; });
-  const _entVals   = _ultMeses.map(ym=>_calcMes(ym).e);
-  const _saiVals   = _ultMeses.map(ym=>_calcMes(ym).s);
 
   // Chart 4: Evolução Mensal do Saldo Líquido (linha)
   if(charts.chartSaldoLiquido) charts.chartSaldoLiquido.destroy();
@@ -5750,17 +5752,18 @@ function renderDashboard(){
 
   // Tabela de Comprometimento Percentual
   (function renderComprometimento(){
-    const wrap = document.getElementById('dashComprometimentoWrap');
+    var wrap = document.getElementById('dashComprometimentoWrap');
     if(!wrap) return;
 
-    // Pegar os últimos N meses com dados disponíveis (apenas até mês atual)
-    const mesesDisp = _mesesOrdenados; // já ordenados e filtrados até ma
-
-    function somaPeríodo(nMeses){
-      const slc = mesesDisp.slice(-nMeses);
-      let totE=0, totS=0;
-      slc.forEach(ym=>{ const r=_calcMes(ym); totE+=r.e; totS+=r.s; });
-      return {totE, totS, n: slc.length};
+    // Calcula totais acumulados para N meses finais de _entVals/_saiVals (já 12 meses)
+    // _entVals[11] = mês atual, _entVals[0] = 11 meses atrás
+    function somaUltimos(n){
+      var totE=0, totS=0;
+      for(var _pi=Math.max(0,12-n);_pi<12;_pi++){
+        totE+=_entVals[_pi]||0;
+        totS+=_saiVals[_pi]||0;
+      }
+      return {totE:totE, totS:totS};
     }
 
     function classePct(pct){
@@ -5777,7 +5780,7 @@ function renderDashboard(){
       if(pct<=100) return '🔴';
       return '🚨';
     }
-    function status(pct){
+    function statusLabel(pct){
       if(pct===null) return 'N/A';
       if(pct<=50)  return 'Dentro da meta';
       if(pct<=70)  return 'Acima do objetivo';
@@ -5786,28 +5789,24 @@ function renderDashboard(){
     }
     function fmtPct(pct){ return pct===null?'N/A':pct.toFixed(2)+'%'; }
 
-    const periodos = [
-      {label:'Último mês',    n:1},
+    var periodos = [
+      {label:'Último mês',      n:1},
       {label:'Últimos 2 meses', n:2},
       {label:'Últimos 3 meses', n:3},
       {label:'Últimos 6 meses', n:6}
-    ].filter(p=>p.n <= mesesDisp.length);
+    ];
 
-    if(!periodos.length){
-      wrap.innerHTML='';
-      return;
-    }
-
-    let linhas = '';
-    periodos.forEach(p=>{
-      const {totE, totS} = somaPeríodo(p.n);
-      const pct = totE>0 ? (totS/totE*100) : null;
+    var linhas = '';
+    periodos.forEach(function(p){
+      var r = somaUltimos(p.n);
+      var totE=r.totE, totS=r.totS;
+      var pct = totE>0 ? (totS/totE*100) : null;
       linhas += `<tr>
         <td style="padding:10px 14px;border:1px solid var(--border);color:var(--text2);font-size:13px;">${p.label}</td>
         <td style="padding:10px 14px;border:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">${fmtR(totE)}</td>
         <td style="padding:10px 14px;border:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">${fmtR(totS)}</td>
         <td style="padding:10px 14px;border:1px solid var(--border);text-align:center;font-size:14px;${classePct(pct)}">${icone(pct)} ${fmtPct(pct)}</td>
-        <td style="padding:10px 14px;border:1px solid var(--border);font-size:12px;${classePct(pct)}">${status(pct)}</td>
+        <td style="padding:10px 14px;border:1px solid var(--border);font-size:12px;${classePct(pct)}">${statusLabel(pct)}</td>
       </tr>`;
     });
 
@@ -12120,20 +12119,26 @@ function renderDashboardV44() {
     totEntAno+=ent; totSaiAno+=sai; meses2.push({mes:mi,ent:ent,sai:sai,saldo:ent-sai});
   }
   var totSaldoAno=totEntAno-totSaiAno;
-  var hAnual='<div class="table-wrap" style="margin-bottom:16px;"><table><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Saldo</th></tr>';
+  var hAnual='<div class="table-wrap" style="margin-bottom:16px;"><table><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Saldo</th><th style="text-align:center;">% Saídas/Entradas</th></tr>';
   meses2.forEach(function(item){
     var cls2=item.saldo>=0?'c-emerald':'c-coral';
     var isCurr=item.mes===m;
+    var pctComp=item.ent>0?(item.sai/item.ent*100):null;
+    var pctCompStr=pctComp===null?'N/A':pctComp.toFixed(2)+'%';
+    var pctCompStyle=pctComp===null?'color:var(--text3);':pctComp<=50?'color:#00E5A0;font-weight:700;':pctComp<=70?'color:#FFB830;font-weight:700;':pctComp<=100?'color:#FF7A00;font-weight:700;':'color:#FF4D6A;font-weight:700;';
     hAnual+='<tr style="'+(isCurr?'background:rgba(255,122,0,.04);':item.mes>m?'opacity:.4;':'')+'">'+
       '<td style="font-weight:700;'+(isCurr?'color:var(--orange);':'color:var(--text2);')+'">'+nomeMesFull(item.mes)+(isCurr?' ◂':'')+'</td>'+
       '<td class="mono c-emerald">'+(item.ent>0?fmtR(item.ent):'—')+'</td>'+
       '<td class="mono c-coral">'+(item.sai>0?fmtR(item.sai):'—')+'</td>'+
-      '<td class="mono '+cls2+'" style="font-weight:700;">'+(item.ent>0||item.sai>0?(item.saldo>=0?'+':'')+fmtR(item.saldo):'—')+'</td></tr>';
+      '<td class="mono '+cls2+'" style="font-weight:700;">'+(item.ent>0||item.sai>0?(item.saldo>=0?'+':'')+fmtR(item.saldo):'—')+'</td>'+
+      '<td class="mono" style="text-align:center;'+pctCompStyle+'">'+pctCompStr+'</td></tr>';
   });
+  var pctCompTotal=totEntAno>0?(totSaiAno/totEntAno*100).toFixed(2)+'%':'N/A';
   hAnual+='<tr class="tr-totais"><td>TOTAL '+a+'</td>'+
     '<td class="mono c-emerald">'+fmtR(totEntAno)+'</td>'+
     '<td class="mono c-coral">'+fmtR(totSaiAno)+'</td>'+
-    '<td class="mono '+(totSaldoAno>=0?'c-emerald':'c-coral')+'">'+(totSaldoAno>=0?'+':'')+fmtR(totSaldoAno)+'</td></tr>'+
+    '<td class="mono '+(totSaldoAno>=0?'c-emerald':'c-coral')+'">'+(totSaldoAno>=0?'+':'')+fmtR(totSaldoAno)+'</td>'+
+    '<td class="mono" style="text-align:center;font-weight:700;">'+pctCompTotal+'</td></tr>'+
     '</table></div>';
   document.getElementById('dashResumoAnual').innerHTML=hAnual;
 
@@ -12161,12 +12166,125 @@ function renderDashboardV44() {
   var ctx2=document.getElementById('chartDespTipo');
   if(ctx2) charts.chartDespTipo=new Chart(ctx2,{type:'doughnut',data:{labels:tLabels.length?tLabels:['Sem dados'],datasets:[{data:tLabels.length?tVals:[1],backgroundColor:tCols,borderColor:'rgba(0,0,0,.3)',borderWidth:2}]},options:{responsive:true,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:'#BCC5D8',font:{size:10},padding:8}}}}});
   
-  var saldoBase=DATA.contas.reduce(function(s,c){return s+c.saldoInicial;},0);
-  var cumul=[]; var runSum=saldoBase;
-  for(var j=0;j<6;j++){runSum+=saldos6[j];cumul.push(runSum);}
+  // Chart 3: Evolução do Saldo — total real das contas (ancora no saldo atual e reconstrói historicamente)
+  var saldoTotalAtualV44=DATA.contas.reduce(function(s,c){return s+saldoConta(c.id);},0);
+  var cumul=[]; var _runV44=saldoTotalAtualV44; var _tmpCV44=[];
+  for(var j=5;j>=0;j--){_tmpCV44.unshift(_runV44);_runV44-=saldos6[j];}
+  cumul=_tmpCV44;
   if(charts.chartEvolSaldo) charts.chartEvolSaldo.destroy();
   var ctx3=document.getElementById('chartEvolSaldo');
-  if(ctx3) charts.chartEvolSaldo=new Chart(ctx3,{type:'line',data:{labels:labels6,datasets:[{label:'Saldo Acumulado',data:cumul,borderColor:'var(--orange)',backgroundColor:'rgba(255,122,0,.08)',borderWidth:2.5,pointBackgroundColor:'var(--orange)',pointRadius:5,fill:true,tension:.4}]},options:{responsive:true,plugins:{legend:{labels:{color:'#BCC5D8',font:{size:11}}}},scales:{x:{ticks:{color:'#8A93B0',font:{size:10}},grid:{color:'rgba(255,255,255,.03)'}},y:{ticks:{color:'#8A93B0',font:{size:10},callback:function(v){return 'R$ '+v.toLocaleString('pt-BR');}},grid:{color:'rgba(255,255,255,.04)'}}}}});
+  if(ctx3) charts.chartEvolSaldo=new Chart(ctx3,{type:'line',data:{labels:labels6,datasets:[{label:'Total das Contas',data:cumul,borderColor:'#FF7A00',backgroundColor:'rgba(255,122,0,.08)',borderWidth:2.5,pointBackgroundColor:'#FF7A00',pointRadius:5,fill:true,tension:.4}]},options:{responsive:true,plugins:{legend:{labels:{color:'#BCC5D8',font:{size:11}}}},scales:{x:{ticks:{color:'#8A93B0',font:{size:10}},grid:{color:'rgba(255,255,255,.03)'}},y:{ticks:{color:'#8A93B0',font:{size:10},callback:function(v){return 'R$ '+v.toLocaleString('pt-BR');}},grid:{color:'rgba(255,255,255,.04)'}}}}});
+
+  // ---- NOVOS GRÁFICOS E TABELA DE ANÁLISE FINANCEIRA ----
+  // Loop de 12 meses para os novos gráficos
+  var _liqLabels=[],_liqVals=[],_entVals=[],_saiVals=[];
+  for(var _ni=11;_ni>=0;_ni--){
+    var _nd2=new Date(a,m-1-_ni,1);
+    var _nm2=_nd2.getMonth()+1; var _na2=_nd2.getFullYear();
+    var _nStr2=_na2+'-'+pad(_nm2);
+    var _ne2=DATA.movimentacoes.filter(function(x){return x.tipoOp==='RECEITA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data&&x.data.indexOf(_nStr2)===0;}).reduce(function(s,x){return s+x.valor;},0);
+    var _ns2=DATA.movimentacoes.filter(function(x){return x.tipoOp==='DESPESA'&&x.status!=='ANULADO'&&x.tipo!=='Transferência'&&x.data&&x.data.indexOf(_nStr2)===0;}).reduce(function(s,x){return s+x.valor;},0);
+    _liqLabels.push(nomeMes(_nm2)+'/'+String(_na2).slice(2));
+    _liqVals.push(_ne2-_ns2);
+    _entVals.push(_ne2);
+    _saiVals.push(_ns2);
+  }
+
+  // Chart 4: Evolução Mensal do Saldo Líquido
+  if(charts.chartSaldoLiquido) charts.chartSaldoLiquido.destroy();
+  var ctx4=document.getElementById('chartSaldoLiquido');
+  if(ctx4) charts.chartSaldoLiquido=new Chart(ctx4,{
+    type:'line',
+    data:{labels:_liqLabels.length?_liqLabels:['Sem dados'],datasets:[{
+      label:'Saldo Líquido (Entradas − Saídas)',
+      data:_liqVals.length?_liqVals:[0],
+      borderColor:'#9B6DFF',backgroundColor:'rgba(155,109,255,.10)',borderWidth:2.5,
+      pointBackgroundColor:_liqVals.map(function(v){return v>=0?'#9B6DFF':'rgba(255,77,106,.9)';}),
+      pointRadius:5,fill:true,tension:.35
+    }]},
+    options:{responsive:true,plugins:{
+      legend:{labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:11}}},
+      tooltip:{callbacks:{label:function(ctx){return 'Saldo: R$ '+ctx.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2});}}}
+    },scales:{
+      x:{ticks:{color:'#8A93B0',font:{size:10}},grid:{color:'rgba(255,255,255,.03)'}},
+      y:{ticks:{color:'#8A93B0',font:{size:10},callback:function(v){return 'R$ '+v.toLocaleString('pt-BR');}},grid:{color:'rgba(255,255,255,.04)'}}
+    }}
+  });
+
+  // Chart 5: Comparativo Entradas vs Saídas
+  if(charts.chartEntradasSaidas) charts.chartEntradasSaidas.destroy();
+  var ctx5=document.getElementById('chartEntradasSaidas');
+  if(ctx5) charts.chartEntradasSaidas=new Chart(ctx5,{
+    type:'line',
+    data:{labels:_liqLabels.length?_liqLabels:['Sem dados'],datasets:[
+      {label:'Entradas',data:_entVals.length?_entVals:[0],
+        borderColor:'#00E5A0',backgroundColor:'rgba(0,229,160,.07)',
+        borderWidth:2.5,pointBackgroundColor:'#00E5A0',pointRadius:5,fill:false,tension:.35},
+      {label:'Saídas',data:_saiVals.length?_saiVals:[0],
+        borderColor:'#FF4D6A',backgroundColor:'rgba(255,77,106,.07)',
+        borderWidth:2.5,pointBackgroundColor:'#FF4D6A',pointRadius:5,fill:false,tension:.35}
+    ]},
+    options:{responsive:true,plugins:{
+      legend:{labels:{color:'#BCC5D8',font:{family:"'Inter',sans-serif",size:11}}},
+      tooltip:{callbacks:{label:function(ctx){return (ctx.dataset.label||'')+': R$ '+ctx.parsed.y.toLocaleString('pt-BR',{minimumFractionDigits:2});}}}
+    },scales:{
+      x:{ticks:{color:'#8A93B0',font:{size:10}},grid:{color:'rgba(255,255,255,.03)'}},
+      y:{ticks:{color:'#8A93B0',font:{size:10},callback:function(v){return 'R$ '+v.toLocaleString('pt-BR');}},grid:{color:'rgba(255,255,255,.04)'}}
+    }}
+  });
+
+  // Tabela de Comprometimento Percentual
+  (function(){
+    var wrap=document.getElementById('dashComprometimentoWrap');
+    if(!wrap) return;
+    function somaUltimos(n){
+      var totE=0,totS=0;
+      for(var _pi=Math.max(0,12-n);_pi<12;_pi++){totE+=_entVals[_pi]||0;totS+=_saiVals[_pi]||0;}
+      return {totE:totE,totS:totS};
+    }
+    function classePct(pct){
+      if(pct===null) return '';
+      if(pct<=50) return 'color:#00E5A0;font-weight:700;';
+      if(pct<=70) return 'color:#FFB830;font-weight:700;';
+      if(pct<=100) return 'color:#FF7A00;font-weight:700;';
+      return 'color:#FF4D6A;font-weight:700;';
+    }
+    function icone(pct){if(pct===null)return '—';if(pct<=50)return '✅';if(pct<=70)return '⚠️';if(pct<=100)return '🔴';return '🚨';}
+    function statusLabel(pct){if(pct===null)return 'N/A';if(pct<=50)return 'Dentro da meta';if(pct<=70)return 'Acima do objetivo';if(pct<=100)return 'Comprometimento elevado';return 'Situação crítica';}
+    function fmtPct(pct){return pct===null?'N/A':pct.toFixed(2)+'%';}
+    var periodos=[{label:'Último mês',n:1},{label:'Últimos 2 meses',n:2},{label:'Últimos 3 meses',n:3},{label:'Últimos 6 meses',n:6}];
+    var linhas='';
+    periodos.forEach(function(p){
+      var r=somaUltimos(p.n);
+      var pct=r.totE>0?(r.totS/r.totE*100):null;
+      linhas+='<tr>'+
+        '<td style="padding:10px 14px;border:1px solid var(--border);color:var(--text2);font-size:13px;">'+p.label+'</td>'+
+        '<td style="padding:10px 14px;border:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">'+fmtR(r.totE)+'</td>'+
+        '<td style="padding:10px 14px;border:1px solid var(--border);text-align:right;font-family:monospace;font-size:13px;">'+fmtR(r.totS)+'</td>'+
+        '<td style="padding:10px 14px;border:1px solid var(--border);text-align:center;font-size:14px;'+classePct(pct)+'">'+icone(pct)+' '+fmtPct(pct)+'</td>'+
+        '<td style="padding:10px 14px;border:1px solid var(--border);font-size:12px;'+classePct(pct)+'">'+statusLabel(pct)+'</td>'+
+        '</tr>';
+    });
+    wrap.innerHTML='<div class="chart-card" style="overflow-x:auto;">'+
+      '<div class="chart-title">◈ Comprometimento das Entradas com Despesas — Meta: até 50%</div>'+
+      '<div style="font-size:11px;color:var(--text3);margin-bottom:12px;">'+
+        '<span style="color:#00E5A0;">✅ ≤50% Dentro da meta</span> &nbsp;'+
+        '<span style="color:#FFB830;">⚠️ 51–70% Atenção</span> &nbsp;'+
+        '<span style="color:#FF7A00;">🔴 71–100% Elevado</span> &nbsp;'+
+        '<span style="color:#FF4D6A;">🚨 &gt;100% Crítico</span>'+
+      '</div>'+
+      '<table style="width:100%;border-collapse:collapse;min-width:520px;">'+
+        '<thead><tr style="background:rgba(255,255,255,.04);">'+
+          '<th style="padding:9px 14px;border:1px solid var(--border);text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Período</th>'+
+          '<th style="padding:9px 14px;border:1px solid var(--border);text-align:right;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Total Entradas</th>'+
+          '<th style="padding:9px 14px;border:1px solid var(--border);text-align:right;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Total Saídas</th>'+
+          '<th style="padding:9px 14px;border:1px solid var(--border);text-align:center;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Comprometimento</th>'+
+          '<th style="padding:9px 14px;border:1px solid var(--border);font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Situação</th>'+
+        '</tr></thead>'+
+        '<tbody>'+linhas+'</tbody>'+
+      '</table>'+
+    '</div>';
+  })();
 }
 
 // Override renderDashboard
@@ -12255,6 +12373,7 @@ function renderPagarV44(){
     '<input id="pfValor" type="text" placeholder="Valor R$" title="Filtrar por valor (ex: 100 ou 1.500,00)" style="min-width:110px;max-width:150px;" oninput="filtrarPagarV44()">'+
     '<select id="pfTipo" onchange="filtrarPagarV44()"><option value="">Todos os tipos</option>'+DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';}).map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('')+'</select>'+
     '<button class="btn btn-sm" onclick="limparFiltrosPagar()">✕ Limpar</button>'+
+    '<button class="btn btn-sm btn-primary" onclick="pdfPagarFiltrado()" title="Gerar PDF com os registros filtrados">📄 PDF</button>'+
     '<div class="filtro-rapido-bar">'+
     '<button class="filtro-rapido-btn" id="frTodos" onclick="setFiltroRapidoPagar(&apos;&apos;)">Todos</button>'+
     '<button class="filtro-rapido-btn" id="frVenc" onclick="setFiltroRapidoPagar(&apos;vencidas&apos;)">🔴 Vencidas</button>'+
@@ -12346,6 +12465,9 @@ window.filtrarPagarV44 = function(){
     '<td><span style="font-size:10px;color:var(--text3);">'+list.filter(function(p){return p.status==='PAGO';}).length+' pagos</span></td>'+
     '<td></td></tr>'+
     '</table>';
+  // Armazena lista filtrada para o gerador de PDF
+  window._pdfPagarList = list;
+
   document.getElementById('pagarTabela').innerHTML=h;
   _renderSelBarPagar();
 };
@@ -12406,7 +12528,7 @@ function renderReceberV44(){
     '<input id="rfBusca" placeholder="🔍 Buscar..." style="min-width:200px;" oninput="filtrarReceberV44()">'+
     '<input id="rfDtIni" type="date" onchange="filtrarReceberV44()">'+
     '<input id="rfDtFim" type="date" onchange="filtrarReceberV44()">'+
-    '<select id="rfStatus" onchange="filtrarReceberV44()"><option value="">Todos</option><option value="PENDENTE">Pendente</option><option value="RECEBIDO">Recebido</option></select>'+
+    '<select id="rfStatus" onchange="filtrarReceberV44()"><option value="">Todos</option><option value="PENDENTE" selected>Pendente</option><option value="RECEBIDO">Recebido</option></select>'+
     '<select id="rfTipo" onchange="filtrarReceberV44()"><option value="">Todos os tipos</option>'+DATA.tipos.filter(function(t){return t.classificacao==='RECEITA';}).map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('')+'</select>'+
     '<button class="btn btn-sm" onclick="limparFiltrosReceber()">✕ Limpar</button>';
   filtrarReceberV44();
@@ -16377,7 +16499,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
         window._contaDetailId = id;
         window._filtrarContaExtrato();
       }, 60);
-    };
+    });
 
     window._filtrarContaExtrato = function(limpar){
       if(limpar){
@@ -21361,6 +21483,113 @@ async function _cdbControlRestoreFromBackup(cdbData){
   }
 
   console.log('✓ NEXUS ONE — CDB Bridge v2 instalada (abre modal nativo de Contas).');
+})();
+</script>
+
+<script>
+// ================================================================
+// NEXUS ONE — PDF A Pagar (filtrado)
+// Gera PDF com todos os registros do filtro atual, sem paginação.
+// ================================================================
+(function nexusPDFPagar(){
+  // Helpers de PDF (mesma implementação dos outros módulos)
+  var PDF_CORES_P={ receita:'#00B37A', despesa:'#D6304A', saldo:'#334155' };
+  function _cab(titulo,subtit,cor){
+    var ag=new Date();
+    var dg=String(ag.getDate()).padStart(2,'0')+'/'+String(ag.getMonth()+1).padStart(2,'0')+'/'+ag.getFullYear()+' '+String(ag.getHours()).padStart(2,'0')+':'+String(ag.getMinutes()).padStart(2,'0');
+    return '<div style="border-bottom:3px solid '+cor+';padding-bottom:14px;margin-bottom:22px;">'+
+      '<div style="font-size:11px;letter-spacing:2px;color:#64748B;font-weight:700;text-transform:uppercase;">NEXUS ONE — SISTEMA FINANCEIRO PESSOAL</div>'+
+      '<div style="font-size:22px;font-weight:800;color:#0F172A;margin-top:4px;">'+titulo+'</div>'+
+      '<div style="font-size:11px;color:#64748B;margin-top:6px;">'+(subtit?'Filtro: '+subtit+' · ':'')+'Gerado em '+dg+'</div>'+
+    '</div>';
+  }
+  function _rod(){
+    return '<div style="margin-top:28px;padding-top:10px;border-top:1px solid #E2E8F0;font-size:10px;color:#94A3B8;">Documento gerado automaticamente pelo Nexus One — reflete os dados registrados no sistema no momento da geração.</div>';
+  }
+  function _abrir(titulo,bodyHtml){
+    var w=window.open('','_blank');
+    if(!w){
+      if(typeof toast==='function') toast('⚠️ Permita pop-ups para gerar o PDF','var(--amber)');
+      return;
+    }
+    w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+titulo+'</title>'+
+      '<style>'+
+      'body{font-family:Arial,Helvetica,sans-serif;color:#0F172A;padding:36px;max-width:900px;margin:0 auto;}'+
+      'table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;}'+
+      'th{background:#F1F5F9;color:#334155;text-align:left;padding:8px 10px;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #E2E8F0;}'+
+      'td{padding:7px 10px;border-bottom:1px solid #EEF2F7;}'+
+      'tr.total td{font-weight:800;background:#F8FAFC;border-top:2px solid #CBD5E1;}'+
+      'tr.vencida td{background:#FFF5F5;}'+
+      'tr.pago td{background:#F0FFF8;opacity:.8;}'+
+      '.mono{font-variant-numeric:tabular-nums;}'+
+      '.neg{color:'+PDF_CORES_P.despesa+';}'+
+      '.ok{color:'+PDF_CORES_P.receita+';}'+
+      '@media print{body{padding:14px;}}'+
+      '</style></head><body>'+bodyHtml+'</body></html>');
+    w.document.close();
+    setTimeout(function(){ w.focus(); w.print(); }, 300);
+  }
+
+  window.pdfPagarFiltrado = function(){
+    var list = window._pdfPagarList || [];
+    if(!list.length){
+      if(typeof toast==='function') toast('⚠️ Nenhum registro no filtro atual','var(--amber)');
+      return;
+    }
+
+    // Monta descrição do filtro ativo para o subtítulo
+    var parts=[];
+    var busca=(document.getElementById('pfBusca')||{}).value||'';
+    var status=(document.getElementById('pfStatus')||{}).value||'';
+    var dtIni=(document.getElementById('pfDtIni')||{}).value||'';
+    var dtFim=(document.getElementById('pfDtFim')||{}).value||'';
+    var tipo=(document.getElementById('pfTipo')||{}).value||'';
+    var despTipo=(document.getElementById('pfDespTipo')||{}).value||'';
+    if(busca) parts.push('Busca: "'+busca+'"');
+    if(status) parts.push('Status: '+status);
+    if(dtIni||dtFim) parts.push('Período: '+(dtIni||'início')+' a '+(dtFim||'hoje'));
+    if(tipo) parts.push('Tipo: '+tipo);
+    if(despTipo) parts.push(despTipo==='fixa'?'Somente Fixas':'Somente Variáveis');
+    var subtit = parts.length ? parts.join(' | ') : 'Todos os registros';
+
+    var hojeStr2=(typeof hoje==='function'?hoje():new Date().toISOString().split('T')[0]);
+    var totVis=list.reduce(function(s,p){return s+p.valor;},0);
+    var totPend=list.filter(function(p){return p.status!=='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+    var totPago=list.filter(function(p){return p.status==='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
+
+    var h = _cab('Contas a Pagar', subtit, PDF_CORES_P.despesa);
+    h += '<table>'+
+      '<tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>F/V</th><th style="text-align:right;">Valor</th><th>Status</th></tr>';
+
+    list.forEach(function(p){
+      var statusTxt;
+      var rowCls='';
+      if(p.status==='PAGO'){ statusTxt='PAGO'; rowCls='pago'; }
+      else if(p.vencimento<hojeStr2){ statusTxt='VENCIDA'; rowCls='vencida'; }
+      else if(p.vencimento===hojeStr2){ statusTxt='VENCE HOJE'; }
+      else{ statusTxt='PENDENTE'; }
+      var ftBadge=(p.despesaTipo||'fixa')==='fixa'?'📌 Fixa':'📊 Var.';
+      var fmtVenc=p.vencimento?(p.vencimento.split('-').reverse().join('/')):'—';
+      h+='<tr class="'+rowCls+'">'+
+        '<td class="mono">'+fmtVenc+'</td>'+
+        '<td>'+(p.descricao||'—')+(p.subtipo?' ['+p.subtipo+']':'')+'</td>'+
+        '<td style="font-size:11px;">'+(p.tipo||'—')+'</td>'+
+        '<td style="font-size:11px;">'+ftBadge+'</td>'+
+        '<td class="mono neg" style="text-align:right;font-weight:600;">'+(typeof fmtR==='function'?fmtR(p.valor):'R$ '+p.valor.toFixed(2))+'</td>'+
+        '<td style="font-size:11px;">'+statusTxt+'</td>'+
+      '</tr>';
+    });
+
+    h += '<tr class="total">'+
+      '<td colspan="4">TOTAL ('+list.length+' registros) — Pendentes: '+(typeof fmtR==='function'?fmtR(totPend):totPend.toFixed(2))+' · Pagos: '+(typeof fmtR==='function'?fmtR(totPago):totPago.toFixed(2))+'</td>'+
+      '<td class="mono neg" style="text-align:right;">'+(typeof fmtR==='function'?fmtR(totVis):totVis.toFixed(2))+'</td>'+
+      '<td></td></tr>'+
+    '</table>'+_rod();
+
+    _abrir('Contas a Pagar — '+subtit, h);
+  };
+
+  console.log('✓ NEXUS ONE — PDF A Pagar (filtrado) instalado.');
 })();
 </script>
 
