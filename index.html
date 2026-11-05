@@ -17350,6 +17350,7 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       '<select id="pfTipo" onchange="filtrarPagarNexus()"><option value="">Todos os tipos</option>'+DATA.tipos.filter(function(t){return t.classificacao==='DESPESA';}).map(function(t){return '<option>'+esc(t.nome)+'</option>';}).join('')+'</select>'+
       '<input id="pfValor" type="text" placeholder="Valor R$" title="Filtrar por valor (ex: 100 ou 1.500,00)" style="min-width:110px;max-width:150px;" oninput="filtrarPagarNexus()">'+
       '<button class="btn btn-sm" onclick="limparFiltrosPagarNexus()">✕ Limpar</button>'+
+      '<button class="btn btn-sm btn-primary" onclick="pdfPagarFiltrado()" title="Gerar PDF com os registros filtrados">📄 PDF</button>'+
       '<button class="btn btn-sm btn-sky" onclick="filtrarPagarExtraNexus(\'mes\')">Este Mês</button>'+
       '<button class="btn btn-sm btn-danger" onclick="filtrarPagarExtraNexus(\'vencidas\')">Vencidas</button>'+
       '<button class="'+btnBaixadasCls+'" onclick="togglePagarBaixadas()">'+btnBaixadasLabel+'</button>';
@@ -17415,6 +17416,9 @@ console.log('  ✓ [BF-3] Módulo Contas: paginação no extrato de movimentaç�
       if(!isNaN(pfValorNum)&&Math.abs(p.valor-pfValorNum)>0.009) return false;
       return true;
     }).sort(function(a,b){return (a.vencimento||'').localeCompare(b.vencimento||'');});
+
+    // Armazena lista filtrada completa para gerador de PDF
+    window._pdfPagarList = list;
 
     var subtotal = list.reduce(function(s,p){return s+p.valor;},0);
     var subtotalPend = list.filter(function(p){return p.status!=='PAGO';}).reduce(function(s,p){return s+p.valor;},0);
@@ -21545,11 +21549,15 @@ async function _cdbControlRestoreFromBackup(cdbData){
     var dtFim=(document.getElementById('pfDtFim')||{}).value||'';
     var tipo=(document.getElementById('pfTipo')||{}).value||'';
     var despTipo=(document.getElementById('pfDespTipo')||{}).value||'';
+    var formaPg=(document.getElementById('pfFormaPg')||{}).value||'';
+    var cartaoF=(document.getElementById('pfCartao')||{}).value||'';
     if(busca) parts.push('Busca: "'+busca+'"');
     if(status) parts.push('Status: '+status);
     if(dtIni||dtFim) parts.push('Período: '+(dtIni||'início')+' a '+(dtFim||'hoje'));
     if(tipo) parts.push('Tipo: '+tipo);
     if(despTipo) parts.push(despTipo==='fixa'?'Somente Fixas':'Somente Variáveis');
+    if(formaPg) parts.push('Forma: '+formaPg);
+    if(cartaoF) parts.push('Cartão: '+cartaoF);
     var subtit = parts.length ? parts.join(' | ') : 'Todos os registros';
 
     var hojeStr2=(typeof hoje==='function'?hoje():new Date().toISOString().split('T')[0]);
@@ -21559,7 +21567,7 @@ async function _cdbControlRestoreFromBackup(cdbData){
 
     var h = _cab('Contas a Pagar', subtit, PDF_CORES_P.despesa);
     h += '<table>'+
-      '<tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>F/V</th><th style="text-align:right;">Valor</th><th>Status</th></tr>';
+      '<tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>Forma Pag.</th><th>Cartão</th><th style="text-align:right;">Valor</th><th>Status</th></tr>';
 
     list.forEach(function(p){
       var statusTxt;
@@ -21568,20 +21576,20 @@ async function _cdbControlRestoreFromBackup(cdbData){
       else if(p.vencimento<hojeStr2){ statusTxt='VENCIDA'; rowCls='vencida'; }
       else if(p.vencimento===hojeStr2){ statusTxt='VENCE HOJE'; }
       else{ statusTxt='PENDENTE'; }
-      var ftBadge=(p.despesaTipo||'fixa')==='fixa'?'📌 Fixa':'📊 Var.';
       var fmtVenc=p.vencimento?(p.vencimento.split('-').reverse().join('/')):'—';
       h+='<tr class="'+rowCls+'">'+
         '<td class="mono">'+fmtVenc+'</td>'+
         '<td>'+(p.descricao||'—')+(p.subtipo?' ['+p.subtipo+']':'')+'</td>'+
         '<td style="font-size:11px;">'+(p.tipo||'—')+'</td>'+
-        '<td style="font-size:11px;">'+ftBadge+'</td>'+
+        '<td style="font-size:11px;">'+(p.formaPagamento||'—')+'</td>'+
+        '<td style="font-size:11px;">'+(p.cartaoUsado||'—')+'</td>'+
         '<td class="mono neg" style="text-align:right;font-weight:600;">'+(typeof fmtR==='function'?fmtR(p.valor):'R$ '+p.valor.toFixed(2))+'</td>'+
         '<td style="font-size:11px;">'+statusTxt+'</td>'+
       '</tr>';
     });
 
     h += '<tr class="total">'+
-      '<td colspan="4">TOTAL ('+list.length+' registros) — Pendentes: '+(typeof fmtR==='function'?fmtR(totPend):totPend.toFixed(2))+' · Pagos: '+(typeof fmtR==='function'?fmtR(totPago):totPago.toFixed(2))+'</td>'+
+      '<td colspan="5">TOTAL ('+list.length+' registros) — Pendentes: '+(typeof fmtR==='function'?fmtR(totPend):totPend.toFixed(2))+' · Pagos: '+(typeof fmtR==='function'?fmtR(totPago):totPago.toFixed(2))+'</td>'+
       '<td class="mono neg" style="text-align:right;">'+(typeof fmtR==='function'?fmtR(totVis):totVis.toFixed(2))+'</td>'+
       '<td></td></tr>'+
     '</table>'+_rod();
