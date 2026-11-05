@@ -5707,11 +5707,7 @@ function renderDashboard(){
       pointBackgroundColor:_liqVals.map(v=>v>=0?'#9B6DFF':'rgba(255,77,106,.9)'),
       pointRadius:5,
       fill:true,
-      tension:.35,
-      segment:{
-        borderColor:ctx=>ctx.p0.parsed.y>=0&&ctx.p1.parsed.y>=0?'#9B6DFF':'rgba(255,77,106,.85)',
-        backgroundColor:ctx=>ctx.p0.parsed.y>=0&&ctx.p1.parsed.y>=0?'rgba(155,109,255,.10)':'rgba(255,77,106,.08)'
-      }
+      tension:.35
     }]},
     options:{
       responsive:true,
@@ -5721,9 +5717,7 @@ function renderDashboard(){
       },
       scales:{
         x:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10}},grid:{color:'rgba(255,255,255,.03)'}},
-        y:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10},callback:v=>'R$ '+v.toLocaleString('pt-BR')},grid:{color:'rgba(255,255,255,.04)'},
-           afterDataLimits(scale){ const pad=Math.abs(scale.max-scale.min)*0.15||100; scale.min-=pad; scale.max+=pad; }
-        }
+        y:{ticks:{color:'#8A93B0',font:{family:"'Inter',sans-serif",size:10},callback:v=>'R$ '+v.toLocaleString('pt-BR')},grid:{color:'rgba(255,255,255,.04)'}}
       }
     }
   });
@@ -5735,11 +5729,11 @@ function renderDashboard(){
     type:'line',
     data:{labels:_liqLabels.length?_liqLabels:['Sem dados'],datasets:[
       {label:'Entradas',data:_entVals.length?_entVals:[0],
-        borderColor:'var(--emerald)',backgroundColor:'rgba(0,229,160,.07)',
-        borderWidth:2.5,pointBackgroundColor:'var(--emerald)',pointRadius:5,fill:false,tension:.35},
+        borderColor:'#00E5A0',backgroundColor:'rgba(0,229,160,.07)',
+        borderWidth:2.5,pointBackgroundColor:'#00E5A0',pointRadius:5,fill:false,tension:.35},
       {label:'Saídas',data:_saiVals.length?_saiVals:[0],
-        borderColor:'var(--coral)',backgroundColor:'rgba(255,77,106,.07)',
-        borderWidth:2.5,pointBackgroundColor:'var(--coral)',pointRadius:5,fill:false,tension:.35}
+        borderColor:'#FF4D6A',backgroundColor:'rgba(255,77,106,.07)',
+        borderWidth:2.5,pointBackgroundColor:'#FF4D6A',pointRadius:5,fill:false,tension:.35}
     ]},
     options:{
       responsive:true,
